@@ -46,6 +46,19 @@ export default function AuthScreen() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
+        // Check if username is taken
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('username')
+          .eq('username', username)
+          .maybeSingle();
+          
+        if (existingProfile) {
+          Alert.alert('Error', 'Username is already taken. Please choose another one.');
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         
