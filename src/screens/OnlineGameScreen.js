@@ -25,6 +25,8 @@ export default function OnlineGameScreen({ route, navigation }) {
   const [pendingCardIndex, setPendingCardIndex] = useState(null);
   const [pendingCard, setPendingCard] = useState(null);
   const [hasDrawn, setHasDrawn] = useState(false); // Track if user drew this turn
+  const [selectedCardIndices, setSelectedCardIndices] = useState([]);
+  const [prevHandCounts, setPrevHandCounts] = useState({});
 
   useEffect(() => {
     fetchRoom();
@@ -102,6 +104,33 @@ export default function OnlineGameScreen({ route, navigation }) {
     if (isMyTurn) setHasDrawn(false);
   }, [isMyTurn]);
 
+  // Networked Voice/SFX Features
+  useEffect(() => {
+    if (!roomData?.game_state) return;
+    const currentHands = roomData.game_state.hands;
+    const newCounts = {};
+    let checkTriggered = false;
+    let winTriggered = false;
+
+    Object.keys(currentHands).forEach(pid => {
+      newCounts[pid] = currentHands[pid].length;
+      if (prevHandCounts[pid] !== undefined) {
+        if (prevHandCounts[pid] > 1 && newCounts[pid] === 1) checkTriggered = true;
+        if (prevHandCounts[pid] > 0 && newCounts[pid] === 0) winTriggered = true;
+      }
+    });
+
+    if (winTriggered) {
+      playSFX('win');
+      Vibration.vibrate([0, 500, 200, 500]);
+    } else if (checkTriggered) {
+      playSFX('check');
+      Vibration.vibrate(100);
+    }
+
+    setPrevHandCounts(newCounts);
+  }, [roomData?.game_state?.hands]);
+
   if (!roomData || !roomData.game_state) return <View style={styles.loadingContainer}><Text style={styles.title}>Loading Game...</Text></View>;
   
   const myHand = gs.hands[profile.id] || [];
@@ -116,51 +145,93 @@ export default function OnlineGameScreen({ route, navigation }) {
     if (state.hands[playerId].length === 0) {
       state.gameOver = true;
       state.winState = { winner: playerId };
-      Vibration.vibrate([0, 500, 200, 500]);
-      playSFX('win');
-    } else if (state.hands[playerId].length === 1) {
-      Vibration.vibrate(100);
-      playSFX('check');
     }
     return state;
   };
 
   const handleCardPress = (index) => {
-    if (!isMyTurn) return;
-    const card = myHand[index];
+    if (!isMyTurn || showSuitPicker) return;
     
-    const valid = isValidPlay(card, topCard, gs.rules.rulesForm, gs.activePenalty, gs.calledSuit, gs.isFreeTurn);
-    if (!valid) return;
+    setSelectedCardIndices(prev => {
+      if (prev.includes(index)) {
+        return prev.filter(i => i !== index);
+      }
+      return [...prev, index];
+    });
+  };
+
+  const handlePlaySelection = () => {
+    if (selectedCardIndices.length === 0) return;
+
+    const selectedCards = selectedCardIndices.map(i => myHand[i]);
+    const firstValue = selectedCards[0].value;
     
-    if (card.value === '8' || card.value === 'Joker' || card.value === 'A') {
-      setPendingCardIndex(index);
-      setPendingCard(card);
+    if (!selectedCards.every(c => c.value === firstValue)) {
+      Alert.alert("Invalid Move", "You can only play multiple cards if they have the same value!");
+      return;
+    }
+
+    const validIndex = selectedCards.findIndex(c => isValidPlay(c, topCard, gs.rules.rulesForm, gs.activePenalty, gs.calledSuit, gs.isFreeTurn));
+    
+    if (validIndex === -1) {
+      if (gs.activePenalty > 0) {
+        Alert.alert("Invalid Move", "You must play a blocking card or draw the penalty!");
+      } else {
+        Alert.alert("Invalid Move", "None of these cards can be played on the discard pile right now!");
+      }
+      return;
+    }
+
+    const cardsToPlay = [...selectedCards];
+    const validCard = cardsToPlay.splice(validIndex, 1)[0];
+    cardsToPlay.unshift(validCard); 
+
+    const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
+
+    if (lastCardPlayed.value === '8' || lastCardPlayed.value === 'Joker' || lastCardPlayed.value === 'A') {
+      setPendingCard(cardsToPlay);
       setShowSuitPicker(true);
       return;
     }
-    
-    executePlay(index, card, null);
+
+    executePlay(cardsToPlay, null);
   };
 
-  const executePlay = (index, card, chosenSuit) => {
+  const executePlay = (cardsToPlay, chosenSuit) => {
     setShowSuitPicker(false);
     Vibration.vibrate(50);
     
     const newState = JSON.parse(JSON.stringify(gs));
     
-    newState.hands[profile.id].splice(index, 1);
-    newState.discardPile.push(card);
+    newState.hands[profile.id] = newState.hands[profile.id].filter((_, i) => !selectedCardIndices.includes(i));
+    setSelectedCardIndices([]);
+    
+    newState.discardPile.push(...cardsToPlay);
     newState.isFreeTurn = false;
     newState.calledSuit = chosenSuit || null;
     
-    if (card.value === '2') newState.activePenalty += 2;
-    if (card.value === 'Joker') newState.activePenalty += 5;
-    if (card.value === '10') newState.direction *= -1;
+    const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
     
-    let skips = (card.value === 'A' && !chosenSuit) ? 1 : 0;
+    cardsToPlay.forEach(card => {
+      if (card.value === '2') newState.activePenalty += 2;
+      if (card.value === 'Joker') newState.activePenalty += 5;
+      if (card.value === '10') newState.direction *= -1;
+    });
     
-    if (newState.hands[profile.id].length > 0 || (card.value !== '2' && card.value !== 'Joker' && card.value !== '8' && card.value !== 'A')) {
-        for(let i=0; i<=skips; i++) {
+    let steps = 1;
+    const jCount = cardsToPlay.filter(c => c.value === 'J').length;
+    if (jCount > 0) {
+      if (jCount % 2 === 1) {
+        newState.direction *= -1;
+      } else {
+        steps = 0;
+      }
+    }
+    
+    let skips = (lastCardPlayed.value === 'A' && !chosenSuit) ? 1 : 0;
+    
+    if (newState.hands[profile.id].length > 0 || (!['2','Joker','8','A','J','7','Q','K'].includes(lastCardPlayed.value))) {
+        for(let i=0; i<steps + skips; i++) {
            nextTurn(newState);
         }
     }
@@ -175,6 +246,8 @@ export default function OnlineGameScreen({ route, navigation }) {
     Vibration.vibrate(50);
 
     const newState = JSON.parse(JSON.stringify(gs));
+    setSelectedCardIndices([]);
+
     
     if (newState.deck.length === 0) {
       const top = newState.discardPile.pop();
@@ -232,6 +305,7 @@ export default function OnlineGameScreen({ route, navigation }) {
           <View style={styles.deckSection}>
             <TouchableOpacity 
               onPress={handleDraw} 
+              onLongPress={handlePass}
               activeOpacity={0.8} 
               style={[
                 isMyTurn && !hasDrawn && styles.glowDeck, 
@@ -278,7 +352,12 @@ export default function OnlineGameScreen({ route, navigation }) {
                 <Text style={styles.directionBadge}>{gs.direction === 1 ? '▶' : '◀'} {gs.rules.rulesForm}</Text>
               </View>
               <View style={styles.actionRow}>
-                {hasDrawn && isMyTurn && gs.activePenalty === 0 && (
+                {selectedCardIndices.length > 0 && isMyTurn && (
+                  <TouchableOpacity style={styles.playBtn} onPress={handlePlaySelection}>
+                    <Text style={styles.playBtnText}>PLAY CARDS</Text>
+                  </TouchableOpacity>
+                )}
+                {hasDrawn && isMyTurn && gs.activePenalty === 0 && selectedCardIndices.length === 0 && (
                   <TouchableOpacity style={styles.passBtn} onPress={handlePass}>
                     <Text style={styles.passBtnText}>PASS</Text>
                   </TouchableOpacity>
@@ -293,7 +372,7 @@ export default function OnlineGameScreen({ route, navigation }) {
                 contentContainerStyle={styles.handScroll}
               >
               {myHand.map((card, index) => {
-                const valid = isMyTurn && isValidPlay(card, topCard, gs.rules.rulesForm, gs.activePenalty, gs.calledSuit, gs.isFreeTurn);
+                const isSelected = selectedCardIndices.includes(index);
                 const middleIndex = (myHand.length - 1) / 2;
                 const distance = index - middleIndex;
                 const maxDistance = 6;
@@ -305,13 +384,12 @@ export default function OnlineGameScreen({ route, navigation }) {
                   <TouchableOpacity 
                     key={`${card.id}-${index}`} 
                     onPress={() => handleCardPress(index)}
-                    disabled={!valid}
                     activeOpacity={0.9}
                     style={{ 
                       marginLeft: index === 0 ? 0 : -45, 
-                      opacity: isMyTurn ? (valid ? 1 : 0.5) : 0.5,
+                      opacity: isMyTurn ? 1 : 0.7,
                       transform: [
-                        { translateY: yOffset },
+                        { translateY: (isSelected ? -30 : 0) + yOffset },
                         { rotateZ: `${rotation}deg` }
                       ],
                       zIndex: index
@@ -337,7 +415,7 @@ export default function OnlineGameScreen({ route, navigation }) {
               <Text style={styles.suitPickerTitle}>Select a Suit</Text>
               <View style={styles.suitRow}>
                 {['♥️', '♦️', '♣️', '♠️'].map(s => (
-                  <TouchableOpacity key={s} style={styles.suitBtn} onPress={() => executePlay(pendingCardIndex, pendingCard, s)}>
+                  <TouchableOpacity key={s} style={styles.suitBtn} onPress={() => executePlay(pendingCard, s)}>
                     <Text style={[styles.suitBtnText, (s === '♥️' || s === '♦️') && styles.redText]}>{s}</Text>
                   </TouchableOpacity>
                 ))}
@@ -524,6 +602,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     marginTop: 2,
+  },
+  playBtn: {
+    backgroundColor: '#10b981',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+  },
+  playBtnText: {
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
   passBtn: {
     backgroundColor: '#7c3aed',
