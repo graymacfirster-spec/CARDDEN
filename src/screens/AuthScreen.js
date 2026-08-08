@@ -11,8 +11,11 @@ export default function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
 
+  const [authError, setAuthError] = useState('');
+
   const validateEmail = (text) => {
     setEmail(text);
+    setAuthError('');
     const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (text && !regex.test(text)) {
       setEmailError('Please enter a valid email address');
@@ -23,6 +26,7 @@ export default function AuthScreen() {
 
   const validatePassword = (text) => {
     setPassword(text);
+    setAuthError('');
     if (text && text.length < 6) {
       setPasswordError('Password must be at least 6 characters');
     } else {
@@ -31,19 +35,20 @@ export default function AuthScreen() {
   };
 
   const handleAuth = async () => {
+    setAuthError('');
     if (!email || !password || (!isLogin && !username)) {
-      Alert.alert('Error', 'Please fill in all fields.');
+      setAuthError('Please fill in all fields.');
       return;
     }
     if (emailError || passwordError) {
-      Alert.alert('Error', 'Please fix validation errors before submitting.');
+      setAuthError('Please fix validation errors before submitting.');
       return;
     }
 
     setLoading(true);
     try {
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
         // Check if username is taken
@@ -54,7 +59,7 @@ export default function AuthScreen() {
           .maybeSingle();
           
         if (existingProfile) {
-          Alert.alert('Error', 'Username is already taken. Please choose another one.');
+          setAuthError('Username is already taken. Please choose another one.');
           setLoading(false);
           return;
         }
@@ -64,7 +69,7 @@ export default function AuthScreen() {
         
         // If email confirmation is enabled, session will be null
         if (!data.session) {
-          Alert.alert('Success', 'Check your email to confirm your account!');
+          setAuthError('Success: Check your email to confirm your account!');
           return;
         }
 
@@ -75,14 +80,14 @@ export default function AuthScreen() {
             .insert([{ id: data.user.id, username }]);
           if (profileError) {
             console.error('Profile creation error:', profileError);
-            Alert.alert('Notice', 'Account created but profile setup failed.');
+            setAuthError('Notice: Account created but profile setup failed.');
           } else {
-            Alert.alert('Success', 'Account created successfully!');
+            setAuthError('Success: Account created successfully!');
           }
         }
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      setAuthError(error.message || 'An error occurred during authentication.');
     } finally {
       setLoading(false);
     }
@@ -93,6 +98,11 @@ export default function AuthScreen() {
       <Text style={styles.title}>CARDDEN</Text>
       
       <View style={styles.form}>
+        {!!authError && (
+          <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', padding: 10, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: '#ef4444' }}>
+            <Text style={{ color: '#ef4444', textAlign: 'center', fontWeight: 'bold' }}>{authError}</Text>
+          </View>
+        )}
         {!isLogin && (
           <TextInput
             style={styles.input}
@@ -158,9 +168,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#8b5cf6',
     marginBottom: 40,
-    textShadowColor: 'rgba(139, 92, 246, 0.5)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
+    textShadow: '0px 0px 20px rgba(139, 92, 246, 0.5)',
   },
   form: {
     width: '100%',
@@ -192,10 +200,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 10,
-    shadowColor: '#ff00ea',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+    boxShadow: '0px 0px 10px rgba(255, 0, 234, 0.5)',
   },
   buttonText: {
     color: 'white',

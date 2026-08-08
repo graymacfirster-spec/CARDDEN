@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Share } from 'react-native';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { generateDeck } from '../engine/GameEngine';
 
 export default function OnlineLobbyScreen({ route, navigation }) {
   const { roomId, roomCode, isHost, role } = route.params;
@@ -74,12 +75,12 @@ export default function OnlineLobbyScreen({ route, navigation }) {
     }
   };
 
+  const players = participants.filter(p => p.role === 'participant');
+  const audience = participants.filter(p => p.role === 'audience');
+
   const startGame = async () => {
     if (!isHost) return;
     setLoading(true);
-    
-    // Import GameEngine logic dynamically to avoid circular dependency or top-level issues if needed, or just standard import
-    const { generateDeck } = require('../engine/GameEngine');
     
     const deck = generateDeck();
     const hands = {};
@@ -125,9 +126,6 @@ export default function OnlineLobbyScreen({ route, navigation }) {
       </View>
     );
   }
-
-  const players = participants.filter(p => p.role === 'participant');
-  const audience = participants.filter(p => p.role === 'audience');
 
   return (
     <View style={styles.container}>

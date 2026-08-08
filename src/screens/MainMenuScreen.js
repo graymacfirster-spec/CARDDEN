@@ -145,9 +145,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#00ffcc',
     textAlign: 'center',
-    textShadowColor: 'rgba(0, 255, 204, 0.5)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
+    textShadow: '0px 0px 10px rgba(0, 255, 204, 0.5)',
   },
   subtitle: {
     fontSize: 18,
@@ -169,10 +167,7 @@ const styles = StyleSheet.create({
   },
   hostBtn: {
     backgroundColor: '#ff00ea',
-    shadowColor: '#ff00ea',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+    boxShadow: '0px 0px 10px rgba(255, 0, 234, 0.5)',
   },
   joinBtn: {
     backgroundColor: '#8b5cf6',

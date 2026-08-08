@@ -9,15 +9,29 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchProfile(session.user.id);
-      else setLoading(false);
-    });
+    const initSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('Supabase session error:', error);
+        }
+        const session = data?.session || null;
+        setSession(session);
+        if (session) {
+          await fetchProfile(session.user.id);
+        } else {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Unexpected error during initSession:', err);
+        setLoading(false);
+      }
+    };
+
+    initSession();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) fetchProfile(session.user.id);
       else {
@@ -26,7 +40,11 @@ export const AuthProvider = ({ children }) => {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      if (listener?.subscription) {
+        listener.subscription.unsubscribe();
+      }
+    };
   }, []);
 
   const fetchProfile = async (userId) => {

@@ -2,6 +2,8 @@ import React from 'react';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { View, ActivityIndicator } from 'react-native';
 
 // Screens
 import AuthScreen from './src/screens/AuthScreen';
@@ -32,7 +34,11 @@ const RootNavigator = () => {
   const { session, loading } = useAuth();
 
   if (loading) {
-    return null; // Or a splash screen
+    return (
+      <View style={{ flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#8b5cf6" />
+      </View>
+    );
   }
 
   return (
@@ -59,13 +65,16 @@ const RootNavigator = () => {
   );
 };
 
+
 export default function App() {
   return (
-    <AuthProvider>
-      <StatusBar style="light" />
-      <NavigationContainer theme={customDarkTheme}>
-        <RootNavigator />
-      </NavigationContainer>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <StatusBar style="light" />
+        <NavigationContainer theme={customDarkTheme}>
+          <RootNavigator />
+        </NavigationContainer>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

@@ -94,17 +94,18 @@ export default function OnlineGameScreen({ route, navigation }) {
     await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
   };
 
-  if (!roomData || !roomData.game_state) return <View style={styles.loadingContainer}><Text style={styles.title}>Loading Game...</Text></View>;
-  
-  const gs = roomData.game_state;
-  const isMyTurn = gs.turnOrder[gs.currentTurnIndex] === profile.id && role === 'participant' && !gs.gameOver;
-  const myHand = gs.hands[profile.id] || [];
-  const topCard = gs.discardPile[gs.discardPile.length - 1];
-  
+  const gs = roomData?.game_state;
+  const isMyTurn = gs ? (gs.turnOrder[gs.currentTurnIndex] === profile.id && role === 'participant' && !gs.gameOver) : false;
+
   // Reset hasDrawn when it's our turn again
   useEffect(() => {
     if (isMyTurn) setHasDrawn(false);
   }, [isMyTurn]);
+
+  if (!roomData || !roomData.game_state) return <View style={styles.loadingContainer}><Text style={styles.title}>Loading Game...</Text></View>;
+  
+  const myHand = gs.hands[profile.id] || [];
+  const topCard = gs.discardPile[gs.discardPile.length - 1];
 
   const nextTurn = (state) => {
     state.currentTurnIndex = (state.currentTurnIndex + state.direction + state.turnOrder.length) % state.turnOrder.length;
