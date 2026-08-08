@@ -28,5 +28,8 @@
     "web": "expo start --web",
     "build": "expo export"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "babel-preset-expo": "^57.0.6"
+  }
 }
