@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Alert, Vibration, Platform, UIManager, LayoutAnimation } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Audio } from 'expo-av';
@@ -28,12 +28,30 @@ export default function OnlineGameScreen({ route, navigation }) {
   const [selectedCardIndices, setSelectedCardIndices] = useState([]);
   const [prevHandCounts, setPrevHandCounts] = useState({});
 
+  const channelRef = useRef(null);
+
   useEffect(() => {
     fetchRoom();
     
-    const roomSub = supabase.channel(`public:rooms:id=eq.${roomId}`)
+    channelRef.current = supabase.channel(`public:rooms:id=eq.${roomId}`, {
+      config: {
+        broadcast: { ack: false },
+      },
+    });
+
+    channelRef.current
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, payload => {
         setRoomData(payload.new);
+      })
+      .on('broadcast', { event: 'participant_move' }, async (payload) => {
+        if (isHost) {
+          try {
+            const { error } = await supabase.from('rooms').update({ game_state: payload.payload.newState }).eq('id', roomId);
+            if (error) console.error("Host broadcast update error:", error);
+          } catch(e) {
+            console.error(e);
+          }
+        }
       })
       .subscribe();
       
@@ -44,7 +62,7 @@ export default function OnlineGameScreen({ route, navigation }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(roomSub);
+      supabase.removeChannel(channelRef.current);
       supabase.removeChannel(partSub);
     };
   }, []);
@@ -93,15 +111,25 @@ export default function OnlineGameScreen({ route, navigation }) {
   };
 
   const updateGameState = async (newState) => {
-    try {
-      const { error } = await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
-      if (error) {
-        console.error("Supabase update error:", error);
-        Alert.alert("Sync Error", error.message + "\\n\\n(You may need to update your Supabase RLS policies for the rooms table to allow participants to update the game_state)");
+    if (isHost) {
+      try {
+        const { error } = await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
+        if (error) {
+          console.error("Supabase update error:", error);
+          Alert.alert("Sync Error", error.message);
+        }
+      } catch (e) {
+        console.error("Catch error:", e);
+        Alert.alert("Network Error", e.message);
       }
-    } catch (e) {
-      console.error("Catch error:", e);
-      Alert.alert("Network Error", e.message);
+    } else {
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'participant_move',
+          payload: { newState }
+        });
+      }
     }
   };
 
