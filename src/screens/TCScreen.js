@@ -13,14 +13,14 @@ export default function TCScreen({ navigation }) {
     // Casino-ey splash entrance (pop and fade in)
     Animated.sequence([
       Animated.parallel([
-        Animated.timing(splashOpacity, { toValue: 1, duration: 1200, useNativeDriver: true }),
-        Animated.spring(splashScale, { toValue: 1, friction: 4, tension: 40, useNativeDriver: true })
+        Animated.timing(splashOpacity, { toValue: 1, duration: 1200, useNativeDriver: false }),
+        Animated.spring(splashScale, { toValue: 1, friction: 4, tension: 40, useNativeDriver: false })
       ]),
       Animated.delay(2000),
       // Fade out and scale up slightly before disappearing
       Animated.parallel([
-        Animated.timing(splashOpacity, { toValue: 0, duration: 800, useNativeDriver: true }),
-        Animated.timing(splashScale, { toValue: 1.2, duration: 800, useNativeDriver: true })
+        Animated.timing(splashOpacity, { toValue: 0, duration: 800, useNativeDriver: false }),
+        Animated.timing(splashScale, { toValue: 1.2, duration: 800, useNativeDriver: false })
       ])
     ]).start(() => {
       setStep('tc');
@@ -30,8 +30,8 @@ export default function TCScreen({ navigation }) {
   useEffect(() => {
     if (step === 'tc') {
       Animated.parallel([
-        Animated.timing(tcOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.spring(tcTranslateY, { toValue: 0, friction: 6, tension: 40, useNativeDriver: true })
+        Animated.timing(tcOpacity, { toValue: 1, duration: 800, useNativeDriver: false }),
+        Animated.spring(tcTranslateY, { toValue: 0, friction: 6, tension: 40, useNativeDriver: false })
       ]).start();
     }
   }, [step]);
@@ -84,7 +84,7 @@ export default function TCScreen({ navigation }) {
 
             <TouchableOpacity 
               style={[styles.button, styles.yesButton]}
-              onPress={() => navigation.replace('Lobby')}
+              onPress={() => navigation.replace('MainMenu')}
               activeOpacity={0.8}
             >
               <Text style={styles.buttonText}>YES</Text>

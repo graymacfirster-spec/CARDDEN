@@ -67,7 +67,7 @@ export default function LobbyScreen({ navigation }) {
           <View style={styles.settingBlock}>
             <Text style={styles.label}>PLAYERS</Text>
             <View style={styles.playerCountContainer}>
-              {[2, 3, 4].map(num => (
+              {[2, 3, 4, 5, 6, 7].map(num => (
                 <TouchableOpacity 
                   key={num}
                   style={[styles.countBtn, playerCount === num && styles.countBtnActive]}
@@ -201,6 +201,8 @@ const styles = StyleSheet.create({
   playerCountContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 10,
   },
   countBtn: {
     width: 40,

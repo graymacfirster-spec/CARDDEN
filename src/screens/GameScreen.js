@@ -115,8 +115,14 @@ export default function GameScreen({ route, navigation }) {
     }
   };
 
-  const checkWinCondition = (handLength, name, isPlayer) => {
+  const checkWinCondition = (handLength, name, isPlayer, isSpecialFinish) => {
     if (handLength === 0) {
+      if (isSpecialFinish) {
+        if (isPlayer) {
+          Alert.alert("Special Finish", "You finished with a special card! You cannot win on a special card. You must draw a card on your next turn.");
+        }
+        return false;
+      }
       setGameOver(true);
       Vibration.vibrate([0, 500, 200, 500]);
       playSFX('win');
@@ -213,18 +219,6 @@ export default function GameScreen({ route, navigation }) {
     if (cardsToPlay.length > 0) {
       let newHand = opp.hand.filter((_, i) => !playedIndices.includes(i));
       const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
-      
-      if (newHand.length === 0 && specialCards.includes(lastCardPlayed.value)) {
-        if (nextDeck.length === 0 && nextDiscard.length > 1) {
-          nextDeck = shuffleDeck(nextDiscard.slice(0, -1));
-          nextDiscard = [nextDiscard[nextDiscard.length - 1]];
-        }
-        if (nextDeck.length > 0) {
-          newHand = [nextDeck[0]];
-          nextDeck.shift();
-        }
-      }
-
       nextOpponents[oppIndex] = { ...opp, hand: newHand };
       
       nextDiscard.push(...cardsToPlay);
@@ -232,7 +226,7 @@ export default function GameScreen({ route, navigation }) {
       setDiscardPile(nextDiscard);
       
       cardsToPlay.forEach(c => applyCardPenalties(c));
-      const didWin = checkWinCondition(newHand.length, opp.name, false);
+      const didWin = checkWinCondition(newHand.length, opp.name, false, specialCards.includes(lastCardPlayed.value));
       if (didWin) return;
 
       let steps = 1;
@@ -314,31 +308,13 @@ export default function GameScreen({ route, navigation }) {
 
     const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
     let newHand = playerHand.filter((_, i) => !selectedCardIndices.includes(i));
-    
-    if (newHand.length === 0 && specialCards.includes(lastCardPlayed.value)) {
-      Alert.alert("Special Card Check!", "You cannot win with a special card, so you must draw a card!");
-      let nextDeck = [...deck];
-      let nextDiscard = [...discardPile, ...cardsToPlay];
-      
-      if (nextDeck.length === 0 && nextDiscard.length > 1) {
-        nextDeck = shuffleDeck(nextDiscard.slice(0, -1));
-        nextDiscard = [nextDiscard[nextDiscard.length - 1]];
-        setDiscardPile(nextDiscard);
-      }
-      if (nextDeck.length > 0) {
-        newHand = [nextDeck[0]];
-        nextDeck.shift();
-        setDeck(nextDeck);
-      }
-    }
-
     setPlayerHand(newHand);
     setSelectedCardIndices([]);
 
     setDiscardPile(prev => [...prev, ...cardsToPlay]);
     cardsToPlay.forEach(c => applyCardPenalties(c));
 
-    const didWin = checkWinCondition(newHand.length, playerName, true);
+    const didWin = checkWinCondition(newHand.length, playerName, true, specialCards.includes(lastCardPlayed.value));
     if (didWin) return;
 
     if (lastCardPlayed.value === '8') {
