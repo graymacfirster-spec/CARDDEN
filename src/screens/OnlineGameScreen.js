@@ -241,7 +241,7 @@ export default function OnlineGameScreen({ route, navigation }) {
 
     const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
 
-    if (lastCardPlayed.value === '8' || lastCardPlayed.value === 'Joker' || lastCardPlayed.value === 'A') {
+    if (lastCardPlayed.value === '8') {
       setPendingCard(cardsToPlay);
       setShowSuitPicker(true);
       return;
@@ -268,23 +268,28 @@ export default function OnlineGameScreen({ route, navigation }) {
     cardsToPlay.forEach(card => {
       if (card.value === '2') newState.activePenalty += 2;
       if (card.value === 'Joker') newState.activePenalty += 5;
-      if (card.value === '10') newState.direction *= -1;
     });
     
     let steps = 1;
-    const jCount = cardsToPlay.filter(c => c.value === 'J').length;
-    if (jCount > 0) {
-      if (jCount % 2 === 1) {
-        newState.direction *= -1;
-      } else {
+    
+    if (lastCardPlayed.value === 'K') {
+      steps = 0;
+    } else if (lastCardPlayed.value === '7') {
+      if (newState.turnOrder.length === 2) {
         steps = 0;
+      } else {
+        steps = 2;
+      }
+    } else if (lastCardPlayed.value === 'J') {
+      if (newState.turnOrder.length === 2) {
+        steps = 0;
+      } else {
+        newState.direction *= -1;
       }
     }
     
-    let skips = (lastCardPlayed.value === 'A' && !chosenSuit) ? 1 : 0;
-    
-    if (newState.hands[profile.id].length > 0 || (!['2','Joker','8','A','J','7','Q','K'].includes(lastCardPlayed.value))) {
-        for(let i=0; i<steps + skips; i++) {
+    if (newState.hands[profile.id].length > 0) {
+        for(let i=0; i<steps; i++) {
            nextTurn(newState);
         }
     }
@@ -426,11 +431,11 @@ export default function OnlineGameScreen({ route, navigation }) {
               </View>
             </View>
             
-            <View style={{ width: '100%', alignItems: 'center' }}>
+            <View style={{ width: '100%' }}>
               <ScrollView 
                 horizontal 
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.handScroll}
+                showsHorizontalScrollIndicator={true}
+                contentContainerStyle={[styles.handScroll, { justifyContent: myHand.length < 7 ? 'center' : 'flex-start' }]}
               >
               {myHand.map((card, index) => {
                 const isSelected = selectedCardIndices.includes(index);
@@ -447,7 +452,7 @@ export default function OnlineGameScreen({ route, navigation }) {
                     onPress={() => handleCardPress(index)}
                     activeOpacity={0.9}
                     style={{ 
-                      marginLeft: index === 0 ? 0 : -45, 
+                      marginLeft: index === 0 ? 0 : -35, 
                       opacity: isMyTurn ? 1 : 0.7,
                       transform: [
                         { translateY: (isSelected ? -30 : 0) + yOffset },
