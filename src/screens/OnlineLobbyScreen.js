@@ -88,7 +88,7 @@ export default function OnlineLobbyScreen({ route, navigation }) {
       discardPile,
       hands,
       turnOrder,
-      currentTurnIndex: 0,
+      currentTurnIndex: Math.floor(Math.random() * players.length),
       direction: 1,
       calledSuit: null,
       activePenalty: 0,
