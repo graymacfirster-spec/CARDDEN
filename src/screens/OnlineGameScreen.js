@@ -28,26 +28,34 @@ export default function OnlineGameScreen({ route, navigation }) {
   const [selectedCardIndices, setSelectedCardIndices] = useState([]);
   const [prevHandCounts, setPrevHandCounts] = useState({});
 
-  const channelRef = useRef(null);
+  const broadcastChannelRef = useRef(null);
 
   useEffect(() => {
     fetchRoom();
     
-    channelRef.current = supabase.channel(`public:rooms:id=eq.${roomId}`, {
-      config: {
-        broadcast: { ack: false },
-      },
-    });
-
-    channelRef.current
+    // Postgres Channel
+    const roomSub = supabase.channel(`public:rooms:id=eq.${roomId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, payload => {
         setRoomData(payload.new);
       })
+      .subscribe();
+      
+    // Broadcast Channel
+    broadcastChannelRef.current = supabase.channel(`room_${roomId}_broadcast`, {
+      config: {
+        broadcast: { ack: true },
+      },
+    });
+
+    broadcastChannelRef.current
       .on('broadcast', { event: 'participant_move' }, async (payload) => {
         if (isHost) {
           try {
             const { error } = await supabase.from('rooms').update({ game_state: payload.payload.newState }).eq('id', roomId);
-            if (error) console.error("Host broadcast update error:", error);
+            if (error) {
+              console.error("Host broadcast update error:", error);
+              Alert.alert("Host Sync Error", error.message);
+            }
           } catch(e) {
             console.error(e);
           }
@@ -62,7 +70,8 @@ export default function OnlineGameScreen({ route, navigation }) {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channelRef.current);
+      supabase.removeChannel(roomSub);
+      supabase.removeChannel(broadcastChannelRef.current);
       supabase.removeChannel(partSub);
     };
   }, []);
@@ -123,12 +132,15 @@ export default function OnlineGameScreen({ route, navigation }) {
         Alert.alert("Network Error", e.message);
       }
     } else {
-      if (channelRef.current) {
-        channelRef.current.send({
+      if (broadcastChannelRef.current) {
+        const resp = await broadcastChannelRef.current.send({
           type: 'broadcast',
           event: 'participant_move',
           payload: { newState }
         });
+        if (resp !== 'ok') {
+          Alert.alert("Broadcast Error", "Failed to send move to host. Please try again.");
+        }
       }
     }
   };
