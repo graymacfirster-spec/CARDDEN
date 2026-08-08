@@ -93,7 +93,16 @@ export default function OnlineGameScreen({ route, navigation }) {
   };
 
   const updateGameState = async (newState) => {
-    await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
+    try {
+      const { error } = await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
+      if (error) {
+        console.error("Supabase update error:", error);
+        Alert.alert("Sync Error", error.message + "\\n\\n(You may need to update your Supabase RLS policies for the rooms table to allow participants to update the game_state)");
+      }
+    } catch (e) {
+      console.error("Catch error:", e);
+      Alert.alert("Network Error", e.message);
+    }
   };
 
   const gs = roomData?.game_state;
