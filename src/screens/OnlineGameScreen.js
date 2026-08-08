@@ -31,7 +31,6 @@ export default function OnlineGameScreen({ route, navigation }) {
     
     const roomSub = supabase.channel(`public:rooms:id=eq.${roomId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, payload => {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setRoomData(payload.new);
       })
       .subscribe();
@@ -145,7 +144,6 @@ export default function OnlineGameScreen({ route, navigation }) {
   const executePlay = (index, card, chosenSuit) => {
     setShowSuitPicker(false);
     Vibration.vibrate(50);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     
     const newState = JSON.parse(JSON.stringify(gs));
     
@@ -174,7 +172,6 @@ export default function OnlineGameScreen({ route, navigation }) {
     if (!isMyTurn || hasDrawn) return;
     
     Vibration.vibrate(50);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
     const newState = JSON.parse(JSON.stringify(gs));
     
@@ -200,7 +197,6 @@ export default function OnlineGameScreen({ route, navigation }) {
 
   const handlePass = () => {
     if (!isMyTurn || !hasDrawn) return;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     const newState = JSON.parse(JSON.stringify(gs));
     nextTurn(newState);
     updateGameState(newState);
@@ -208,7 +204,7 @@ export default function OnlineGameScreen({ route, navigation }) {
 
   const getPlayerName = (id) => {
     const p = participants.find(part => part.profile_id === id);
-    return p ? p.profiles.username : 'Unknown';
+    return p?.profiles?.username || 'Unknown';
   };
 
   return (
