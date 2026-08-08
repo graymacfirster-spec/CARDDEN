@@ -150,7 +150,11 @@ export default function OnlineGameScreen({ route, navigation }) {
   };
 
   const handleCardPress = (index) => {
-    if (!isMyTurn || showSuitPicker) return;
+    if (showSuitPicker) return;
+    if (!isMyTurn) {
+      Alert.alert("Not Your Turn!", "Please wait for the active player to make their move.");
+      return;
+    }
     
     setSelectedCardIndices(prev => {
       if (prev.includes(index)) {
@@ -299,6 +303,14 @@ export default function OnlineGameScreen({ route, navigation }) {
             );
           })}
         </View>
+
+        {/* Turn Indicator */}
+        <View style={styles.turnIndicator}>
+          <Text style={[styles.turnText, isMyTurn ? styles.myTurnText : styles.opponentTurnText]}>
+            {isMyTurn ? "YOUR TURN!" : `${getPlayerName(gs.turnOrder[gs.currentTurnIndex]).toUpperCase()}'S TURN`}
+          </Text>
+        </View>
+
         
         {/* Play Area */}
         <View style={styles.boardContainer}>
@@ -485,6 +497,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 5,
+  },
+  turnIndicator: {
+    padding: 10,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  turnText: {
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  myTurnText: {
+    color: '#00ffcc',
+    textShadowColor: 'rgba(0, 255, 204, 0.5)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  opponentTurnText: {
+    color: '#ef4444',
   },
   cardCountText: {
     fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',

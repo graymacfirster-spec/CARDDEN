@@ -188,8 +188,14 @@ export default function OnlineLobbyScreen({ route, navigation }) {
           )}
 
           {isHost ? (
-            <TouchableOpacity style={styles.startBtn} onPress={startGame} disabled={loading}>
-              <Text style={styles.startBtnText}>{loading ? 'STARTING...' : 'START GAME'}</Text>
+            <TouchableOpacity 
+              style={[styles.startBtn, (loading || players.length !== playerCount) && { opacity: 0.5 }]} 
+              onPress={startGame} 
+              disabled={loading || players.length !== playerCount}
+            >
+              <Text style={styles.startBtnText}>
+                {loading ? 'STARTING...' : (players.length !== playerCount ? `WAITING FOR ${playerCount} PLAYERS` : 'START GAME')}
+              </Text>
             </TouchableOpacity>
           ) : (
             <View style={[styles.startBtn, { backgroundColor: '#475569', shadowOpacity: 0 }]}>
