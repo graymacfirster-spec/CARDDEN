@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Share } from 'react-native';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -64,6 +64,16 @@ export default function OnlineLobbyScreen({ route, navigation }) {
     }
   };
 
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `Join my CARDDEN room! The room code is: ${roomCode}`,
+      });
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
   const startGame = async () => {
     if (!isHost) return;
     setLoading(true);
@@ -123,9 +133,14 @@ export default function OnlineLobbyScreen({ route, navigation }) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>LOBBY</Text>
-        <View style={styles.codeBox}>
-          <Text style={styles.codeLabel}>ROOM CODE</Text>
-          <Text style={styles.code}>{roomCode}</Text>
+        <View style={{flexDirection: 'row', gap: 10, alignItems: 'center'}}>
+          <View style={styles.codeBox}>
+            <Text style={styles.codeLabel}>ROOM CODE</Text>
+            <Text style={styles.code}>{roomCode}</Text>
+          </View>
+          <TouchableOpacity style={styles.shareBtn} onPress={handleShare}>
+            <Text style={styles.shareBtnText}>SHARE</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -225,6 +240,21 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '900',
     letterSpacing: 3,
+  },
+  shareBtn: {
+    backgroundColor: '#8b5cf6',
+    padding: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#a78bfa',
+  },
+  shareBtnText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+    letterSpacing: 1,
   },
   content: {
     flex: 1,

@@ -53,7 +53,7 @@ export default function MainMenuScreen({ navigation }) {
         .single();
         
       if (roomError || !room) {
-        throw new Error('Room not found or invalid code.');
+        throw new Error('That is the wrong room code.');
       }
       if (room.status !== 'waiting' && role === 'participant') {
         throw new Error('Game has already started. You can only join as an audience member.');
