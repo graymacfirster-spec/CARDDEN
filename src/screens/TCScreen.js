@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, SafeAreaView, Animated, Alert, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, Image, SafeAreaView, Animated, Alert, BackHandler } from 'react-native';
+import FeltTable from '../components/FeltTable';
+import { BrassButton } from '../components/TableUI';
+import { COLORS, FONTS, RADIUS, shadow } from '../theme/casino';
 
 export default function TCScreen({ navigation }) {
   const [step, setStep] = useState('splash');
@@ -43,7 +46,8 @@ export default function TCScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <FeltTable>
+      <SafeAreaView style={styles.container}>
       {step === 'splash' && (
         <Animated.View style={[styles.splashContent, { opacity: splashOpacity, transform: [{ scale: splashScale }] }]}>
           <Image 
@@ -74,113 +78,66 @@ export default function TCScreen({ navigation }) {
           </View>
 
           <View style={styles.buttonContainer}>
-            <TouchableOpacity 
-              style={[styles.button, styles.noButton]}
-              onPress={handleNo}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.buttonText}>NO</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.button, styles.yesButton]}
+            <BrassButton label="I DECLINE" tone="red" onPress={handleNo} style={styles.grow} />
+            <BrassButton
+              label="I AGREE — DEAL ME IN"
+              tone="gold"
               onPress={() => navigation.replace('MainMenu')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.buttonText}>YES</Text>
-            </TouchableOpacity>
+              style={styles.grow}
+            />
           </View>
         </Animated.View>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </FeltTable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
     justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 28,
+    paddingVertical: 18,
   },
-  splashContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tcContent: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  logo: {
-    width: 250,
-    height: 250,
-    marginBottom: 10,
-  },
+  splashContent: { alignItems: 'center', justifyContent: 'center' },
+  tcContent: { flex: 1, justifyContent: 'center' },
+  logo: { width: 190, height: 190, marginBottom: 6 },
   studioText: {
-    color: '#8b5cf6', // neon purple
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 2,
-    marginBottom: 40,
-    textShadow: '0px 0px 10px rgba(139, 92, 246, 0.5)',
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 4,
+    marginBottom: 20,
   },
   card: {
-    backgroundColor: '#1e293b',
-    padding: 24,
-    borderRadius: 20,
+    backgroundColor: 'rgba(3, 26, 15, 0.78)',
+    padding: 20,
+    borderRadius: RADIUS.lg,
     width: '100%',
-    boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.3)',
-    elevation: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.2)',
-    marginBottom: 30,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldDim,
+    marginBottom: 18,
+    ...shadow(14),
   },
   warningTitle: {
-    color: '#fbbf24',
-    fontSize: 20,
-    fontWeight: '900',
-    marginBottom: 20,
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 14,
     textAlign: 'center',
-    letterSpacing: 1,
+    letterSpacing: 3,
   },
   rule: {
-    color: '#94a3b8',
-    fontSize: 15,
-    lineHeight: 24,
-    marginBottom: 15,
-    fontWeight: '500',
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 10,
   },
-  highlight: {
-    color: '#f8fafc',
-    fontWeight: 'bold',
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 18,
-    borderRadius: 16,
-    alignItems: 'center',
-    boxShadow: '0px 0px 15px rgba(0, 0, 0, 0.6)',
-    elevation: 8,
-  },
-  noButton: {
-    backgroundColor: '#ef4444', // red
-    boxShadow: '0px 0px 15px rgba(239, 68, 68, 0.6)',
-    marginRight: 10,
-  },
-  yesButton: {
-    backgroundColor: '#8b5cf6', // neon purple
-    boxShadow: '0px 0px 15px rgba(139, 92, 246, 0.6)',
-    marginLeft: 10,
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-  }
+  highlight: { color: COLORS.cream, fontWeight: '800' },
+  buttonContainer: { flexDirection: 'row', gap: 14, width: '100%' },
+  grow: { flex: 1 },
 });

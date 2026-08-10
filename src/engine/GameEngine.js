@@ -72,8 +72,119 @@ export function isValidPlay(card, topCard, rulesForm, activePenalty, calledSuit,
   if (card.suit === topCard.suit || card.value === topCard.value) return true;
 
   if (topCard.value === 'A' && rulesForm === 'Form 4' && isBlack(topCard.suit)) {
-    return true; 
+    return true;
   }
-  
+
   return false;
+}
+
+/* ------------------------------------------------------------------ *
+ * State transitions
+ *
+ * These are pure: they mutate the draft they are handed and return it.
+ * Both the local and the online screen drive the game through these, so the
+ * rules exist in exactly one place.
+ * ------------------------------------------------------------------ */
+
+export function topCardOf(state) {
+  return state.discardPile[state.discardPile.length - 1];
+}
+
+export function advanceTurn(state, steps = 1) {
+  const n = state.turnOrder.length;
+  for (let i = 0; i < steps; i++) {
+    state.currentTurnIndex = (state.currentTurnIndex + state.direction + n) % n;
+  }
+  return state;
+}
+
+export function checkWin(state, playerId) {
+  if (state.hands[playerId]?.length === 0) {
+    state.gameOver = true;
+    state.winState = { winner: playerId };
+  }
+  return state;
+}
+
+/** Refill the draw pile from the discard pile, keeping the face-up card. */
+export function reshuffleIfEmpty(state) {
+  if (state.deck.length > 0) return state;
+  const top = state.discardPile.pop();
+  state.deck = shuffleDeck(state.discardPile);
+  state.discardPile = top ? [top] : [];
+  return state;
+}
+
+/**
+ * How many seats the turn moves after `card` is played.
+ * K holds the turn, 7 skips the next player, J reverses. In a two-player game
+ * both a skip and a reverse simply hand the turn straight back.
+ */
+export function turnStepsFor(card, state) {
+  const headsUp = state.turnOrder.length === 2;
+  if (card.value === 'K') return 0;
+  if (card.value === '7') return headsUp ? 0 : 2;
+  if (card.value === 'J') {
+    if (headsUp) return 0;
+    state.direction *= -1;
+    return 1;
+  }
+  return 1;
+}
+
+/**
+ * Play an ordered run of same-value cards for `playerId`.
+ * `cards` must already be ordered so the legal card leads.
+ */
+export function applyPlay(state, playerId, handIndices, cards, chosenSuit = null) {
+  const drop = new Set(handIndices);
+  state.hands[playerId] = state.hands[playerId].filter((_, i) => !drop.has(i));
+  state.discardPile.push(...cards);
+  state.isFreeTurn = false;
+  state.calledSuit = chosenSuit || null;
+
+  for (const card of cards) {
+    if (card.value === '2') state.activePenalty += 2;
+    if (card.value === 'Joker') state.activePenalty += 5;
+  }
+
+  const last = cards[cards.length - 1];
+  const steps = turnStepsFor(last, state);
+
+  if (state.hands[playerId].length > 0) advanceTurn(state, steps);
+  return checkWin(state, playerId);
+}
+
+/** Draw: either eat the stacked penalty (turn ends) or take a single card. */
+export function applyDraw(state, playerId) {
+  reshuffleIfEmpty(state);
+
+  if (state.activePenalty > 0) {
+    const drawn = state.deck.splice(0, state.activePenalty);
+    state.hands[playerId].push(...drawn);
+    state.activePenalty = 0;
+    advanceTurn(state, 1);
+    return { state, endedTurn: true, drawnCount: drawn.length };
+  }
+
+  const card = state.deck.shift();
+  if (card) state.hands[playerId].push(card);
+  return { state, endedTurn: false, drawnCount: card ? 1 : 0 };
+}
+
+export function applyPass(state) {
+  return advanceTurn(state, 1);
+}
+
+/** Indices in `hand` that are legal right now — used to highlight playable cards. */
+export function playableIndices(hand, state) {
+  const top = topCardOf(state);
+  if (!top) return [];
+  const out = [];
+  for (let i = 0; i < hand.length; i++) {
+    if (isValidPlay(hand[i], top, state.rules?.rulesForm, state.activePenalty, state.calledSuit, state.isFreeTurn)) {
+      out.push(i);
+    }
+  }
+  return out;
 }

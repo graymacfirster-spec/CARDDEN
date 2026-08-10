@@ -1,818 +1,820 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Alert, Vibration, Platform, UIManager, LayoutAnimation } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Audio } from 'expo-av';
-import { supabase } from '../services/supabase';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  ZoomIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useAuth } from '../context/AuthContext';
-import PlayingCard from '../components/PlayingCard';
-import { isValidPlay, SUITS } from '../engine/GameEngine';
+import { useRoomSync } from '../net/useRoomSync';
+import { useVoiceChat } from '../voice/useVoiceChat';
+import { useTableSound } from '../hooks/useTableSound';
+import { useLandscape } from '../hooks/useLandscape';
+import FeltTable from '../components/FeltTable';
+import PlayingCard, { CARD_ASPECT } from '../components/PlayingCard';
+import CardFan from '../components/CardFan';
+import VoiceHUD from '../components/VoiceHUD';
+import { BrassButton, Plaque, PlayerSeat } from '../components/TableUI';
+import { COLORS, FONTS, RADIUS, glow, shadow, suitGlyph, isRedSuit } from '../theme/casino';
+import {
+  applyDraw,
+  applyPass,
+  applyPlay,
+  isValidPlay,
+  playableIndices,
+  topCardOf,
+} from '../engine/GameEngine';
 
-if (Platform.OS === 'android') {
-  if (UIManager.setLayoutAnimationEnabledExperimental) {
-    UIManager.setLayoutAnimationEnabledExperimental(true);
-  }
-}
+const SUIT_CHOICES = ['♥️', '♦️', '♣️', '♠️'];
 
 export default function OnlineGameScreen({ route, navigation }) {
   const { roomId, isHost, role } = route.params;
   const { profile } = useAuth();
-  
-  const [roomData, setRoomData] = useState(null);
-  const [participants, setParticipants] = useState([]);
-  
-  // Local state for UI only
-  const [showSuitPicker, setShowSuitPicker] = useState(false);
-  const [pendingCardIndex, setPendingCardIndex] = useState(null);
-  const [pendingCard, setPendingCard] = useState(null);
-  const [hasDrawn, setHasDrawn] = useState(false); // Track if user drew this turn
-  const [selectedCardIndices, setSelectedCardIndices] = useState([]);
-  const [prevHandCounts, setPrevHandCounts] = useState({});
+  const selfId = profile?.id;
 
-  const broadcastChannelRef = useRef(null);
+  const { width, height, needsRotate } = useLandscape();
+  const insets = useSafeAreaInsets();
+  const { playCheck, playWin, tap, notify } = useTableSound();
 
-  useEffect(() => {
-    fetchRoom();
-    
-    // Postgres Channel
-    const roomSub = supabase.channel(`public:rooms:id=eq.${roomId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, payload => {
-        setRoomData(payload.new);
-      })
-      .subscribe();
-      
-    // Broadcast Channel
-    broadcastChannelRef.current = supabase.channel(`room_${roomId}_broadcast`, {
-      config: {
-        broadcast: { ack: true },
-      },
-    });
+  const { gameState: gs, participants, connected, applyMove, channel, channelEpoch } = useRoomSync({
+    roomId,
+    isHost,
+    selfId,
+  });
 
-    broadcastChannelRef.current
-      .on('broadcast', { event: 'participant_move' }, async (payload) => {
-        if (isHost) {
-          try {
-            const { error } = await supabase.from('rooms').update({ game_state: payload.payload.newState }).eq('id', roomId);
-            if (error) {
-              console.error("Host broadcast update error:", error);
-              Alert.alert("Host Sync Error", error.message);
-            }
-          } catch(e) {
-            console.error(e);
-          }
-        }
-      })
-      .subscribe();
-      
-    const partSub = supabase.channel(`public:room_participants:room_id=eq.${roomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_participants', filter: `room_id=eq.${roomId}` }, () => {
-        fetchParticipants();
-      })
-      .subscribe();
+  const voice = useVoiceChat({ channelRef: channel, selfId, channelEpoch });
 
-    return () => {
-      supabase.removeChannel(roomSub);
-      supabase.removeChannel(broadcastChannelRef.current);
-      supabase.removeChannel(partSub);
+  const [selected, setSelected] = useState([]);
+  const [suitPickerFor, setSuitPickerFor] = useState(null); // { indices, cards }
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  // ---- Responsive metrics (landscape-first) -------------------------------
+  const metrics = useMemo(() => {
+    const shortSide = Math.min(width, height);
+    // The fan is ~1.85 card-heights tall, so cards stay modest in landscape.
+    const handCard = Math.round(Math.max(46, Math.min(76, shortSide * 0.17)));
+    return {
+      handCard,
+      boardCard: Math.round(handCard * 1.05),
+      compactSeats: width < 760,
     };
+  }, [width, height]);
+
+  const showToast = useCallback((message, tone = 'warn') => {
+    setToast({ message, tone });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
   }, []);
 
-  // Audio setup
-  useEffect(() => {
-    let bgSound;
-    async function initAudio() {
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../assets/bg.wav'),
-          { shouldPlay: true, isLooping: true, volume: 0.3 }
-        );
-        bgSound = sound;
-      } catch (e) {
-        console.log("Audio load error:", e);
-      }
-    }
-    initAudio();
-    return () => {
-      if (bgSound) bgSound.unloadAsync();
-    };
-  }, []);
+  useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), []);
 
-  const playSFX = async (type) => {
-    try {
-      const file = type === 'win' ? require('../../assets/win.wav') : require('../../assets/check.wav');
-      const { sound } = await Audio.Sound.createAsync(file, { shouldPlay: true });
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) sound.unloadAsync();
-      });
-    } catch (e) {
-      console.log("SFX error:", e);
-    }
-  };
+  // ---- Derived game facts -------------------------------------------------
+  const isPlayer = role === 'participant';
+  const myHand = useMemo(() => (gs && selfId ? gs.hands?.[selfId] ?? [] : []), [gs, selfId]);
+  const activePlayerId = gs ? gs.turnOrder[gs.currentTurnIndex] : null;
+  const isMyTurn = !!gs && !gs.gameOver && isPlayer && activePlayerId === selfId;
+  const topCard = gs ? topCardOf(gs) : null;
 
-  const fetchRoom = async () => {
-    const { data } = await supabase.from('rooms').select('*').eq('id', roomId).single();
-    setRoomData(data);
-    fetchParticipants();
-  };
-  
-  const fetchParticipants = async () => {
-    const { data } = await supabase.from('room_participants').select('*, profiles(username)').eq('room_id', roomId);
-    setParticipants(data || []);
-  };
+  const playable = useMemo(
+    () => (gs && isMyTurn ? playableIndices(myHand, gs) : []),
+    [gs, isMyTurn, myHand]
+  );
 
-  const updateGameState = async (newState) => {
-    if (isHost) {
-      try {
-        const { error } = await supabase.from('rooms').update({ game_state: newState }).eq('id', roomId);
-        if (error) {
-          console.error("Supabase update error:", error);
-          Alert.alert("Sync Error", error.message);
-        }
-      } catch (e) {
-        console.error("Catch error:", e);
-        Alert.alert("Network Error", e.message);
-      }
-    } else {
-      if (broadcastChannelRef.current) {
-        const resp = await broadcastChannelRef.current.send({
-          type: 'broadcast',
-          event: 'participant_move',
-          payload: { newState }
-        });
-        if (resp !== 'ok') {
-          Alert.alert("Broadcast Error", "Failed to send move to host. Please try again.");
-        }
-      }
-    }
-  };
+  const nameOf = useCallback(
+    (id) => participants.find((p) => p.profile_id === id)?.profiles?.username || 'Player',
+    [participants]
+  );
 
-  const gs = roomData?.game_state;
-  const isMyTurn = gs ? (gs.turnOrder[gs.currentTurnIndex] === profile.id && role === 'participant' && !gs.gameOver) : false;
-
-  // Reset hasDrawn when it's our turn again
+  // Reset the per-turn draw flag whenever the turn comes back around.
   useEffect(() => {
     if (isMyTurn) setHasDrawn(false);
-  }, [isMyTurn]);
+  }, [isMyTurn, gs?.currentTurnIndex]);
 
-  // Networked Voice/SFX Features
+  // Clear a stale selection if the hand changed underneath us.
   useEffect(() => {
-    if (!roomData?.game_state) return;
-    const currentHands = roomData.game_state.hands;
-    const newCounts = {};
-    let checkTriggered = false;
-    let winTriggered = false;
+    setSelected((prev) => prev.filter((i) => i < myHand.length));
+  }, [myHand.length]);
 
-    Object.keys(currentHands).forEach(pid => {
-      newCounts[pid] = currentHands[pid].length;
-      if (prevHandCounts[pid] !== undefined) {
-        if (prevHandCounts[pid] > 1 && newCounts[pid] === 1) checkTriggered = true;
-        if (prevHandCounts[pid] > 0 && newCounts[pid] === 0) winTriggered = true;
+  // ---- Stingers: someone hit one card, or won -----------------------------
+  const prevCounts = useRef({});
+  useEffect(() => {
+    if (!gs?.hands) return;
+    const counts = {};
+    let check = false;
+    let win = false;
+    for (const [pid, hand] of Object.entries(gs.hands)) {
+      counts[pid] = hand.length;
+      const before = prevCounts.current[pid];
+      if (before === undefined) continue;
+      if (before > 1 && counts[pid] === 1) check = true;
+      if (before > 0 && counts[pid] === 0) win = true;
+    }
+    prevCounts.current = counts;
+    if (win) playWin();
+    else if (check) playCheck();
+  }, [gs?.hands, playCheck, playWin]);
+
+  // ---- Actions ------------------------------------------------------------
+  const handleCardPress = useCallback(
+    (index) => {
+      if (suitPickerFor) return;
+      if (!isMyTurn) {
+        showToast(`Hold up — it's ${nameOf(activePlayerId)}'s turn.`);
+        return;
       }
-    });
+      tap('light');
+      setSelected((prev) =>
+        prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+      );
+    },
+    [suitPickerFor, isMyTurn, showToast, nameOf, activePlayerId, tap]
+  );
 
-    if (winTriggered) {
-      playSFX('win');
-      Vibration.vibrate([0, 500, 200, 500]);
-    } else if (checkTriggered) {
-      playSFX('check');
-      Vibration.vibrate(100);
-    }
+  const executePlay = useCallback(
+    (indices, cards, chosenSuit) => {
+      setSuitPickerFor(null);
+      setSelected([]);
+      setHasDrawn(false);
+      tap('medium');
+      applyMove((draft) => applyPlay(draft, selfId, indices, cards, chosenSuit));
+    },
+    [applyMove, selfId, tap]
+  );
 
-    setPrevHandCounts(newCounts);
-  }, [roomData?.game_state?.hands]);
+  const handlePlaySelection = useCallback(() => {
+    if (!selected.length || !gs) return;
 
-  if (!roomData || !roomData.game_state) return <View style={styles.loadingContainer}><Text style={styles.title}>Loading Game...</Text></View>;
-  
-  const myHand = gs.hands[profile.id] || [];
-  const topCard = gs.discardPile[gs.discardPile.length - 1];
-
-  const nextTurn = (state) => {
-    state.currentTurnIndex = (state.currentTurnIndex + state.direction + state.turnOrder.length) % state.turnOrder.length;
-    return state;
-  };
-
-  const checkWinCondition = (state, playerId) => {
-    if (state.hands[playerId].length === 0) {
-      state.gameOver = true;
-      state.winState = { winner: playerId };
-    }
-    return state;
-  };
-
-  const handleCardPress = (index) => {
-    if (showSuitPicker) return;
-    if (!isMyTurn) {
-      Alert.alert("Not Your Turn!", "Please wait for the active player to make their move.");
-      return;
-    }
-    
-    setSelectedCardIndices(prev => {
-      if (prev.includes(index)) {
-        return prev.filter(i => i !== index);
-      }
-      return [...prev, index];
-    });
-  };
-
-  const handlePlaySelection = () => {
-    if (selectedCardIndices.length === 0) return;
-
-    const selectedCards = selectedCardIndices.map(i => myHand[i]);
-    const firstValue = selectedCards[0].value;
-    
-    if (!selectedCards.every(c => c.value === firstValue)) {
-      Alert.alert("Invalid Move", "You can only play multiple cards if they have the same value!");
+    const cards = selected.map((i) => myHand[i]);
+    if (!cards.every((c) => c.value === cards[0].value)) {
+      showToast('Multiple cards must all share the same value.');
+      notify('error');
       return;
     }
 
-    const validIndex = selectedCards.findIndex(c => isValidPlay(c, topCard, gs.rules.rulesForm, gs.activePenalty, gs.calledSuit, gs.isFreeTurn));
-    
-    if (validIndex === -1) {
-      if (gs.activePenalty > 0) {
-        Alert.alert("Invalid Move", "You must play a blocking card or draw the penalty!");
-      } else {
-        Alert.alert("Invalid Move", "None of these cards can be played on the discard pile right now!");
-      }
+    const leadAt = cards.findIndex((c) =>
+      isValidPlay(c, topCard, gs.rules?.rulesForm, gs.activePenalty, gs.calledSuit, gs.isFreeTurn)
+    );
+    if (leadAt === -1) {
+      showToast(
+        gs.activePenalty > 0
+          ? `Block with a 2, Ace or Joker — or draw ${gs.activePenalty}.`
+          : "That won't go on the pile."
+      );
+      notify('error');
       return;
     }
 
-    const cardsToPlay = [...selectedCards];
-    const validCard = cardsToPlay.splice(validIndex, 1)[0];
-    cardsToPlay.unshift(validCard); 
+    // The legal card has to lead the run; the rest follow.
+    const ordered = [...cards];
+    ordered.unshift(ordered.splice(leadAt, 1)[0]);
 
-    const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
-
-    if (lastCardPlayed.value === '8') {
-      setPendingCard(cardsToPlay);
-      setShowSuitPicker(true);
+    if (ordered[ordered.length - 1].value === '8') {
+      setSuitPickerFor({ indices: selected, cards: ordered });
       return;
     }
+    executePlay(selected, ordered, null);
+  }, [selected, gs, myHand, topCard, showToast, notify, executePlay]);
 
-    executePlay(cardsToPlay, null);
-  };
-
-  const executePlay = (cardsToPlay, chosenSuit) => {
-    setShowSuitPicker(false);
-    Vibration.vibrate(50);
-    
-    const newState = JSON.parse(JSON.stringify(gs));
-    
-    newState.hands[profile.id] = newState.hands[profile.id].filter((_, i) => !selectedCardIndices.includes(i));
-    setSelectedCardIndices([]);
-    
-    newState.discardPile.push(...cardsToPlay);
-    newState.isFreeTurn = false;
-    newState.calledSuit = chosenSuit || null;
-    
-    const lastCardPlayed = cardsToPlay[cardsToPlay.length - 1];
-    
-    cardsToPlay.forEach(card => {
-      if (card.value === '2') newState.activePenalty += 2;
-      if (card.value === 'Joker') newState.activePenalty += 5;
-    });
-    
-    let steps = 1;
-    
-    if (lastCardPlayed.value === 'K') {
-      steps = 0;
-    } else if (lastCardPlayed.value === '7') {
-      if (newState.turnOrder.length === 2) {
-        steps = 0;
-      } else {
-        steps = 2;
-      }
-    } else if (lastCardPlayed.value === 'J') {
-      if (newState.turnOrder.length === 2) {
-        steps = 0;
-      } else {
-        newState.direction *= -1;
-      }
-    }
-    
-    if (newState.hands[profile.id].length > 0) {
-        for(let i=0; i<steps; i++) {
-           nextTurn(newState);
-        }
-    }
-    
-    checkWinCondition(newState, profile.id);
-    updateGameState(newState);
-  };
-
-  const handleDraw = () => {
+  const handleDraw = useCallback(() => {
     if (!isMyTurn || hasDrawn) return;
-    
-    Vibration.vibrate(50);
+    tap('light');
+    setSelected([]);
+    let endedTurn = false;
+    applyMove((draft) => {
+      const res = applyDraw(draft, selfId);
+      endedTurn = res.endedTurn;
+      return res.state;
+    });
+    if (!endedTurn) setHasDrawn(true);
+  }, [isMyTurn, hasDrawn, applyMove, selfId, tap]);
 
-    const newState = JSON.parse(JSON.stringify(gs));
-    setSelectedCardIndices([]);
-
-    
-    if (newState.deck.length === 0) {
-      const top = newState.discardPile.pop();
-      newState.deck = newState.discardPile.sort(() => Math.random() - 0.5);
-      newState.discardPile = [top];
-    }
-    
-    if (newState.activePenalty > 0) {
-      const drawn = newState.deck.splice(0, newState.activePenalty);
-      newState.hands[profile.id].push(...drawn);
-      newState.activePenalty = 0;
-      nextTurn(newState); // Turn ends after drawing penalty
-    } else {
-      const drawn = newState.deck.shift();
-      if(drawn) newState.hands[profile.id].push(drawn);
-      setHasDrawn(true); // Can still play if it matches, otherwise must manually pass
-    }
-    
-    updateGameState(newState);
-  };
-
-  const handlePass = () => {
+  const handlePass = useCallback(() => {
     if (!isMyTurn || !hasDrawn) return;
-    const newState = JSON.parse(JSON.stringify(gs));
-    nextTurn(newState);
-    updateGameState(newState);
-  };
+    tap('light');
+    setSelected([]);
+    setHasDrawn(false);
+    applyMove((draft) => applyPass(draft));
+  }, [isMyTurn, hasDrawn, applyMove, tap]);
 
-  const getPlayerName = (id) => {
-    const p = participants.find(part => part.profile_id === id);
-    return p?.profiles?.username || 'Unknown';
-  };
+  // ---- Render -------------------------------------------------------------
+  if (needsRotate) {
+    return (
+      <FeltTable>
+        <View style={styles.rotateWrap}>
+          <Text style={styles.rotateGlyph}>⟳</Text>
+          <Text style={styles.rotateText}>TURN YOUR DEVICE SIDEWAYS</Text>
+          <Text style={styles.rotateSub}>CARDDEN is played on a wide table.</Text>
+        </View>
+      </FeltTable>
+    );
+  }
+
+  if (!gs) {
+    return (
+      <FeltTable>
+        <View style={styles.rotateWrap}>
+          <Text style={styles.rotateText}>DEALING IN…</Text>
+          <Text style={styles.rotateSub}>{connected ? 'Table connected' : 'Connecting to the table'}</Text>
+        </View>
+      </FeltTable>
+    );
+  }
+
+  const opponents = gs.turnOrder.filter((pid) => !(isPlayer && pid === selfId));
 
   return (
-    <LinearGradient colors={['#000000', '#1a0b2e', '#000000']} style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }}>
-        
-        {/* Bridge Container for Opponents */}
-        <View style={styles.bridgeContainer}>
-          {gs.turnOrder.map((pid, idx) => {
-            if (pid === profile.id && role === 'participant') return null; 
-            const isTurn = gs.currentTurnIndex === idx;
-            return (
-              <View key={pid} style={[styles.opponent, isTurn && styles.activeOpponent]}>
-                <Text style={styles.opponentName}>{getPlayerName(pid)}</Text>
-                <Text style={styles.cardCountText}>{gs.hands[pid]?.length || 0}</Text>
-                <Text style={styles.cardLabel}>CARDS</Text>
-              </View>
-            );
-          })}
+    <FeltTable>
+      <View
+        style={[
+          styles.safe,
+          {
+            paddingTop: insets.top,
+            paddingLeft: 12 + insets.left,
+            paddingRight: 12 + insets.right,
+          },
+        ]}
+      >
+        {/* ---- Top rail ---- */}
+        <View style={styles.topRail}>
+          <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={8}>
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+
+          <View style={styles.seatRow}>
+            {opponents.map((pid) => (
+              <PlayerSeat
+                key={pid}
+                name={nameOf(pid)}
+                cardCount={gs.hands[pid]?.length ?? 0}
+                isTurn={activePlayerId === pid}
+                inVoice={voice.connectedPeers.includes(pid)}
+                isSpeaking={!!voice.speaking[pid]}
+                compact={metrics.compactSeats}
+              />
+            ))}
+          </View>
+
+          <VoiceHUD
+            supported={voice.supported}
+            unavailableReason={voice.unavailableReason}
+            joined={voice.joined}
+            muted={voice.muted}
+            deafened={voice.deafened}
+            error={voice.error}
+            selfSpeaking={!!voice.speaking[selfId]}
+            peerCount={voice.connectedPeers.length}
+            onJoin={voice.join}
+            onLeave={voice.leave}
+            onToggleMute={voice.toggleMute}
+            onToggleDeafen={voice.toggleDeafen}
+          />
         </View>
 
-        {/* Turn Indicator */}
-        <View style={styles.turnIndicator}>
-          <Text style={[styles.turnText, isMyTurn ? styles.myTurnText : styles.opponentTurnText]}>
-            {isMyTurn ? "YOUR TURN!" : `${getPlayerName(gs.turnOrder[gs.currentTurnIndex]).toUpperCase()}'S TURN`}
-          </Text>
+        {/* ---- Board ---- */}
+        <View style={styles.board}>
+          <DrawPile
+            width={metrics.boardCard}
+            count={gs.deck.length}
+            penalty={gs.activePenalty}
+            live={isMyTurn && !hasDrawn}
+            onPress={handleDraw}
+          />
+
+          <View style={styles.centerColumn}>
+            <TurnBanner
+              isMyTurn={isMyTurn}
+              label={
+                gs.gameOver
+                  ? 'HAND OVER'
+                  : isMyTurn
+                    ? 'YOUR TURN'
+                    : `${nameOf(activePlayerId).toUpperCase()}'S TURN`
+              }
+            />
+            <View style={styles.metaRow}>
+              <Plaque>
+                <Text style={styles.metaText}>
+                  {gs.direction === 1 ? '↻ CLOCKWISE' : '↺ COUNTER'}
+                </Text>
+              </Plaque>
+              <Plaque>
+                <Text style={styles.metaText}>{gs.rules?.rulesForm ?? 'HOUSE RULES'}</Text>
+              </Plaque>
+              <Plaque tone={connected ? 'live' : 'warn'}>
+                <Text style={styles.metaText}>{connected ? 'LIVE' : 'RECONNECTING'}</Text>
+              </Plaque>
+            </View>
+          </View>
+
+          <DiscardStack pile={gs.discardPile} width={metrics.boardCard} calledSuit={gs.calledSuit} />
         </View>
 
-        
-        {/* Play Area */}
-        <View style={styles.boardContainer}>
-          <View style={styles.deckSection}>
-            <TouchableOpacity 
-              onPress={handleDraw} 
-              onLongPress={handlePass}
-              activeOpacity={0.8} 
-              style={[
-                isMyTurn && !hasDrawn && styles.glowDeck, 
-                (!isMyTurn || hasDrawn) && styles.disabledDeck,
-                gs.activePenalty > 0 && isMyTurn && styles.penaltyDeck
-              ]}
-              disabled={!isMyTurn || hasDrawn}
-            >
-              <PlayingCard isHidden={true} />
-            </TouchableOpacity>
-            {gs.activePenalty > 0 && (
-              <View style={styles.penaltyBadge}>
-                <Text style={styles.penaltyText}>+{gs.activePenalty}</Text>
-              </View>
-            )}
-          </View>
-          
-          <View style={styles.discardContainer}>
-            {gs.discardPile.map((card, index) => {
-              if (index < gs.discardPile.length - 4) return null; 
-              return (
-                <PlayingCard 
-                  key={`${card.id}-${index}`}
-                  suit={card.suit} 
-                  value={card.value}
-                  style={{ position: 'absolute', transform: [{ rotate: `${(index * 7) % 20 - 10}deg` }] }}
-                />
-              );
-            })}
-            {gs.calledSuit && (
-              <View style={styles.calledSuitBadge}>
-                <Text style={styles.calledSuitBadgeText}>{gs.calledSuit}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-        
-        {/* Bottom Area - Player Hand */}
-        {role === 'participant' ? (
-          <View style={[styles.playerContainer, isMyTurn && styles.activePlayerContainer]}>
-            <View style={styles.handHeader}>
-              <View>
-                <Text style={styles.playerName}>{profile.username ? profile.username.toUpperCase() : 'YOU'}</Text>
-                <Text style={styles.directionBadge}>{gs.direction === 1 ? '▶' : '◀'} {gs.rules.rulesForm}</Text>
-              </View>
-              <View style={styles.actionRow}>
-                {selectedCardIndices.length > 0 && isMyTurn && (
-                  <TouchableOpacity style={styles.playBtn} onPress={handlePlaySelection}>
-                    <Text style={styles.playBtnText}>PLAY CARDS</Text>
-                  </TouchableOpacity>
+        {/* ---- Player rail ---- */}
+        {isPlayer ? (
+          <View style={styles.playerRail}>
+            <View style={styles.railHeader}>
+              <View style={styles.railIdentity}>
+                {voice.joined && !voice.muted && (
+                  <View style={[styles.liveDot, voice.speaking[selfId] && styles.liveDotOn]} />
                 )}
-                {hasDrawn && isMyTurn && gs.activePenalty === 0 && selectedCardIndices.length === 0 && (
-                  <TouchableOpacity style={styles.passBtn} onPress={handlePass}>
-                    <Text style={styles.passBtnText}>PASS</Text>
-                  </TouchableOpacity>
+                <Text style={styles.railName} numberOfLines={1}>
+                  {(profile?.username || 'YOU').toUpperCase()}
+                </Text>
+                <Text style={styles.railCount}>{myHand.length} IN HAND</Text>
+              </View>
+
+              <View style={styles.railActions}>
+                {isMyTurn && gs.activePenalty > 0 && (
+                  <Plaque tone="warn">
+                    <Text style={styles.penaltyText}>STACKED +{gs.activePenalty}</Text>
+                  </Plaque>
+                )}
+                {selected.length > 0 && isMyTurn && (
+                  <BrassButton
+                    label={selected.length > 1 ? `PLAY ${selected.length}` : 'PLAY'}
+                    tone="green"
+                    compact
+                    onPress={handlePlaySelection}
+                  />
+                )}
+                {selected.length > 0 && (
+                  <BrassButton label="CLEAR" tone="slate" compact onPress={() => setSelected([])} />
+                )}
+                {isMyTurn && hasDrawn && gs.activePenalty === 0 && selected.length === 0 && (
+                  <BrassButton label="PASS" tone="gold" compact onPress={handlePass} />
+                )}
+                {isMyTurn && playable.length === 0 && !hasDrawn && (
+                  <Plaque tone="warn">
+                    <Text style={styles.penaltyText}>NOTHING PLAYS — DRAW</Text>
+                  </Plaque>
                 )}
               </View>
             </View>
-            
-            <View style={{ width: '100%' }}>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={true}
-                contentContainerStyle={[styles.handScroll, { justifyContent: myHand.length < 7 ? 'center' : 'flex-start' }]}
-              >
-              {myHand.map((card, index) => {
-                const isSelected = selectedCardIndices.includes(index);
-                const middleIndex = (myHand.length - 1) / 2;
-                const distance = index - middleIndex;
-                const maxDistance = 6;
-                const effectiveDistance = Math.max(-maxDistance, Math.min(maxDistance, distance));
-                const rotation = effectiveDistance * 4; 
-                const yOffset = Math.pow(Math.abs(effectiveDistance), 1.5) * 3;
 
-                return (
-                  <TouchableOpacity 
-                    key={`${card.id}-${index}`} 
-                    onPress={() => handleCardPress(index)}
-                    activeOpacity={0.9}
-                    style={{ 
-                      marginLeft: index === 0 ? 0 : -35, 
-                      opacity: isMyTurn ? 1 : 0.7,
-                      transform: [
-                        { translateY: (isSelected ? -30 : 0) + yOffset },
-                        { rotateZ: `${rotation}deg` }
-                      ],
-                      zIndex: index
-                    }}
-                  >
-                    <PlayingCard suit={card.suit} value={card.value} />
-                  </TouchableOpacity>
-                )
-              })}
-              </ScrollView>
-            </View>
+            <CardFan
+              cards={myHand}
+              selectedIndices={selected}
+              onCardPress={handleCardPress}
+              cardWidth={metrics.handCard}
+              availableWidth={width - 32}
+              dimmed={!isMyTurn}
+            />
           </View>
         ) : (
-          <View style={[styles.playerContainer]}>
-            <Text style={{color: '#00ffcc', fontWeight: '900', fontSize: 18, textAlign: 'center'}}>SPECTATING</Text>
+          <View style={styles.spectatorRail}>
+            <Plaque tone="live">
+              <Text style={styles.metaText}>SPECTATING · VOICE ENABLED</Text>
+            </Plaque>
           </View>
         )}
 
-        {/* Suit Picker Modal */}
-        {showSuitPicker && (
-          <View style={styles.modalOverlay}>
-            <View style={styles.suitPickerContainer}>
-              <Text style={styles.suitPickerTitle}>Select a Suit</Text>
+        {/* ---- Toast ---- */}
+        {toast && (
+          <Animated.View entering={FadeInDown.duration(160)} style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastText}>{toast.message}</Text>
+          </Animated.View>
+        )}
+
+        {/* ---- Suit picker ---- */}
+        {suitPickerFor && (
+          <Animated.View entering={FadeIn.duration(140)} style={styles.overlay}>
+            <Animated.View entering={ZoomIn.springify().damping(16)} style={styles.modal}>
+              <Text style={styles.modalTitle}>CALL THE SUIT</Text>
               <View style={styles.suitRow}>
-                {['♥️', '♦️', '♣️', '♠️'].map(s => (
-                  <TouchableOpacity key={s} style={styles.suitBtn} onPress={() => executePlay(pendingCard, s)}>
-                    <Text style={[styles.suitBtnText, (s === '♥️' || s === '♦️') && styles.redText]}>{s}</Text>
-                  </TouchableOpacity>
+                {SUIT_CHOICES.map((s) => (
+                  <Pressable
+                    key={s}
+                    style={styles.suitBtn}
+                    onPress={() => executePlay(suitPickerFor.indices, suitPickerFor.cards, s)}
+                  >
+                    <Text
+                      style={[styles.suitGlyph, { color: isRedSuit(s) ? COLORS.suitRed : COLORS.suitBlack }]}
+                    >
+                      {suitGlyph(s)}
+                    </Text>
+                  </Pressable>
                 ))}
               </View>
-            </View>
-          </View>
-        )}
-        
-        {/* Game Over Modal */}
-        {gs.gameOver && (
-          <View style={styles.modalOverlay}>
-            <View style={styles.winContainer}>
-              <Text style={styles.winTitle}>GAME OVER</Text>
-              <Text style={styles.winSubtitle}>{getPlayerName(gs.winState.winner)} WON! 🎉</Text>
-              <TouchableOpacity style={styles.lobbyButton} onPress={() => navigation.replace('MainMenu')}>
-                <Text style={styles.lobbyButtonText}>BACK TO MENU</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+              <Pressable onPress={() => setSuitPickerFor(null)} hitSlop={8}>
+                <Text style={styles.modalCancel}>CANCEL</Text>
+              </Pressable>
+            </Animated.View>
+          </Animated.View>
         )}
 
-      </SafeAreaView>
-    </LinearGradient>
+        {/* ---- Game over ---- */}
+        {gs.gameOver && (
+          <Animated.View entering={FadeIn.duration(200)} style={styles.overlay}>
+            <Animated.View entering={ZoomIn.springify().damping(14)} style={styles.modal}>
+              <Text style={styles.winKicker}>THE HAND IS OVER</Text>
+              <Text style={styles.winName}>{nameOf(gs.winState?.winner).toUpperCase()}</Text>
+              <Text style={styles.winSub}>TAKES THE POT</Text>
+              <BrassButton
+                label="BACK TO THE FLOOR"
+                tone="gold"
+                onPress={() => navigation.replace('MainMenu')}
+                style={{ marginTop: 18 }}
+              />
+            </Animated.View>
+          </Animated.View>
+        )}
+      </View>
+    </FeltTable>
   );
 }
 
+/* ---------------------------------------------------------------- */
+
+function TurnBanner({ label, isMyTurn }) {
+  const pulse = useSharedValue(0);
+  useEffect(() => {
+    pulse.value = isMyTurn
+      ? withRepeat(
+          withSequence(withTiming(1, { duration: 800 }), withTiming(0, { duration: 800 })),
+          -1,
+          false
+        )
+      : withTiming(0, { duration: 200 });
+  }, [isMyTurn, pulse]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + pulse.value * 0.035 }],
+  }));
+
+  return (
+    <Animated.View style={style}>
+      <Plaque tone={isMyTurn ? 'live' : 'neutral'} style={styles.turnPlaque}>
+        <Text style={[styles.turnText, isMyTurn && styles.turnTextLive]} numberOfLines={1}>
+          {label}
+        </Text>
+      </Plaque>
+    </Animated.View>
+  );
+}
+
+function DrawPile({ width, count, penalty, live, onPress }) {
+  const pulse = useSharedValue(0);
+  useEffect(() => {
+    pulse.value = live
+      ? withRepeat(withSequence(withTiming(1, { duration: 700 }), withTiming(0, { duration: 700 })), -1, false)
+      : withTiming(0, { duration: 200 });
+  }, [live, pulse]);
+
+  const halo = useAnimatedStyle(() => ({ opacity: 0.2 + pulse.value * 0.6 }));
+
+  // A few offset backs so the pile reads as a stack with depth.
+  const depth = Math.min(3, Math.max(0, Math.ceil(count / 12)));
+
+  return (
+    <View style={styles.pileWrap}>
+      <Pressable onPress={onPress} disabled={!live} style={!live && styles.pileIdle}>
+        <View>
+          {Array.from({ length: depth }).map((_, i) => (
+            <View
+              key={i}
+              style={[styles.pileShadowCard, { top: -(i + 1) * 2, left: (i + 1) * 2 }]}
+            >
+              <PlayingCard isHidden width={width} />
+            </View>
+          ))}
+          {live && (
+            <Animated.View
+              style={[
+                styles.drawHalo,
+                { width: width + 12, height: width * CARD_ASPECT + 12, borderRadius: width * 0.14 },
+                penalty > 0 && styles.drawHaloDanger,
+                halo,
+              ]}
+              pointerEvents="none"
+            />
+          )}
+          <PlayingCard isHidden width={width} />
+        </View>
+      </Pressable>
+
+      <Text style={styles.pileLabel}>{count} LEFT</Text>
+
+      {penalty > 0 && (
+        <Animated.View entering={ZoomIn.springify()} style={styles.penaltyBadge}>
+          <Text style={styles.penaltyBadgeText}>+{penalty}</Text>
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
+function DiscardStack({ pile, width, calledSuit }) {
+  // Only the last few cards are ever visible — rendering the whole pile was
+  // pointless work that grew with the length of the game.
+  const visible = pile.slice(-4);
+
+  return (
+    <View style={[styles.pileWrap, { width: width * 1.5 }]}>
+      <View style={{ width, height: width * CARD_ASPECT }}>
+        {visible.map((card, i) => {
+          const isTop = i === visible.length - 1;
+          const seed = (pile.length - visible.length + i) * 37;
+          const angle = ((seed % 17) - 8) * 1.1;
+          return (
+            <Animated.View
+              key={`${card.id}-${pile.length - visible.length + i}`}
+              entering={isTop ? ZoomIn.springify().damping(15).mass(0.6) : undefined}
+              style={[
+                StyleSheet.absoluteFill,
+                { transform: [{ rotate: `${angle}deg` }], zIndex: i },
+              ]}
+            >
+              <PlayingCard suit={card.suit} value={card.value} width={width} />
+            </Animated.View>
+          );
+        })}
+      </View>
+
+      <Text style={styles.pileLabel}>DISCARD</Text>
+
+      {!!calledSuit && (
+        <Animated.View entering={ZoomIn.springify()} style={styles.calledSuit}>
+          <Text
+            style={[
+              styles.calledSuitGlyph,
+              { color: isRedSuit(calledSuit) ? COLORS.suitRed : COLORS.suitBlack },
+            ]}
+          >
+            {suitGlyph(calledSuit)}
+          </Text>
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+
 const styles = StyleSheet.create({
-  loadingContainer: { flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center' },
-  title: { color: '#00ffcc', fontSize: 24, fontWeight: 'bold' },
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-    justifyContent: 'space-between',
-  },
-  bridgeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 50,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#166534',
-  },
-  opponent: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-    padding: 15,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#334155',
-    minWidth: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-  },
-  activeOpponent: {
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.8,
-    shadowRadius: 15,
-  },
-  opponentName: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#f8fafc',
+  safe: { flex: 1 },
+
+  rotateWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+  rotateGlyph: { fontSize: 44, color: COLORS.goldBright },
+  rotateText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.goldBright,
     fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  turnIndicator: {
-    padding: 10,
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
-  },
-  turnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 24,
-    fontWeight: '900',
+    fontWeight: '800',
     letterSpacing: 2,
+    textAlign: 'center',
   },
-  myTurnText: {
-    color: '#00ffcc',
-    textShadowColor: 'rgba(0, 255, 204, 0.5)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
+  rotateSub: { fontFamily: FONTS.ui, color: COLORS.creamDim, fontSize: 12, letterSpacing: 1 },
+
+  topRail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingTop: 4,
   },
-  opponentTurnText: {
-    color: '#ef4444',
+  backBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.goldDim,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  cardCountText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#fbbf24',
-    fontSize: 32,
-    fontWeight: '900',
-    textShadowColor: 'rgba(251, 191, 36, 0.4)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
-  },
-  cardLabel: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginTop: 2,
-  },
-  boardContainer: {
+  backGlyph: { color: COLORS.goldBright, fontSize: 22, lineHeight: 24, marginTop: -2 },
+  seatRow: {
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+
+  board: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 40,
+    justifyContent: 'center',
+    gap: 18,
   },
-  deckSection: {
-    alignItems: 'center',
+  centerColumn: { alignItems: 'center', gap: 8, maxWidth: 260 },
+  metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: 'center' },
+  metaText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.3,
   },
-  glowDeck: {
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 15,
+  turnPlaque: { paddingHorizontal: 20, paddingVertical: 7 },
+  turnText: {
+    fontFamily: FONTS.display,
+    color: COLORS.cream,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
-  penaltyDeck: {
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
+  turnTextLive: { color: COLORS.goldBright },
+
+  pileWrap: { alignItems: 'center', gap: 6 },
+  pileIdle: { opacity: 0.62 },
+  pileShadowCard: { position: 'absolute', opacity: 0.75 },
+  drawHalo: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    borderWidth: 2,
+    borderColor: COLORS.goldBright,
+    ...glow(COLORS.goldBright, 14, 1),
+  },
+  drawHaloDanger: { borderColor: COLORS.danger, ...glow(COLORS.danger, 14, 1) },
+  pileLabel: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    fontWeight: '700',
   },
   penaltyBadge: {
     position: 'absolute',
-    top: -15,
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#f8fafc',
-    shadowColor: '#ef4444',
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
+    top: -10,
+    right: -8,
+    backgroundColor: COLORS.danger,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldBright,
+    ...glow(COLORS.danger, 10, 0.9),
   },
-  penaltyText: {
-    color: 'white',
+  penaltyBadgeText: {
+    fontFamily: FONTS.ui,
+    color: '#fff',
+    fontSize: 12,
     fontWeight: '900',
-    fontSize: 16,
   },
-  disabledDeck: {
-    opacity: 0.5,
-  },
-  discardContainer: {
-    width: 90,
-    height: 130,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  calledSuitBadge: {
+  calledSuit: {
     position: 'absolute',
-    top: -20,
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    top: -10,
+    right: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.ivory,
     borderWidth: 2,
-    borderColor: '#fbbf24',
-  },
-  calledSuitBadgeText: {
-    fontSize: 20,
-    color: 'white',
-  },
-  playerContainer: {
-    padding: 25,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-    borderTopLeftRadius: 35,
-    borderTopRightRadius: 35,
-    borderTopWidth: 2,
-    borderTopColor: '#334155',
-  },
-  activePlayerContainer: {
-    borderTopColor: '#8b5cf6',
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: -5 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 20,
-  },
-  handHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    borderColor: COLORS.gold,
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    ...shadow(6),
   },
-  actionRow: {
+  calledSuitGlyph: { fontSize: 15, fontWeight: '700' },
+
+  playerRail: {
+    borderTopWidth: 1.5,
+    borderTopColor: COLORS.goldDim,
+    backgroundColor: 'rgba(2, 24, 14, 0.55)',
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    paddingTop: 4,
+  },
+  railHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
     gap: 10,
   },
-  playerName: {
-    color: '#f8fafc',
-    fontSize: 20,
-    fontWeight: '900',
-    letterSpacing: 1,
+  railIdentity: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  railName: {
+    fontFamily: FONTS.ui,
+    color: COLORS.goldBright,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    maxWidth: 160,
   },
-  directionBadge: {
-    color: '#8b5cf6',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginTop: 2,
+  railCount: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    fontWeight: '700',
   },
-  playBtn: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+  railActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
-  playBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.5,
+  liveDotOn: { backgroundColor: COLORS.success, ...glow(COLORS.success, 8, 1) },
+  penaltyText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
-  passBtn: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    shadowColor: '#7c3aed',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-  },
-  passBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  handScroll: {
-    flexGrow: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 220,
-    paddingHorizontal: 20,
-    paddingTop: 40,
-    paddingBottom: 20,
-  },
-  modalOverlay: {
+  spectatorRail: { alignItems: 'center', paddingVertical: 16 },
+
+  toast: {
     position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
+    bottom: '38%',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(10,0,0,0.88)',
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    maxWidth: 420,
+    ...shadow(10),
+  },
+  toastText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textAlign: 'center',
+  },
+
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.72)',
     alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 1000,
   },
-  suitPickerContainer: {
-    backgroundColor: '#1e293b',
-    padding: 25,
-    borderRadius: 20,
-    alignItems: 'center',
+  modal: {
+    backgroundColor: '#07301c',
+    borderRadius: RADIUS.lg,
     borderWidth: 2,
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-  },
-  suitPickerTitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#f8fafc',
-    fontSize: 24,
-    fontWeight: '900',
-    marginBottom: 20,
-  },
-  suitRow: {
-    flexDirection: 'row',
-    gap: 15,
-  },
-  suitBtn: {
-    backgroundColor: '#0f172a',
-    padding: 20,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  suitBtnText: {
-    fontSize: 35,
-    color: '#f8fafc',
-  },
-  redText: {
-    color: '#ef4444',
-  },
-  winContainer: {
-    backgroundColor: 'rgba(30, 41, 59, 0.95)',
-    padding: 30,
-    borderRadius: 20,
+    borderColor: COLORS.gold,
+    paddingHorizontal: 28,
+    paddingVertical: 22,
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
+    gap: 12,
+    ...shadow(20),
   },
-  winTitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 55,
-    color: '#fbbf24',
-    marginBottom: 10,
-    textShadowColor: 'rgba(251, 191, 36, 0.5)',
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 10,
+  modalTitle: {
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 3,
   },
-  winSubtitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 20,
-    color: '#f8fafc',
-    marginBottom: 30,
+  modalCancel: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 10,
+    letterSpacing: 2,
+    fontWeight: '700',
   },
-  lobbyButton: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 15,
+  suitRow: { flexDirection: 'row', gap: 12 },
+  suitBtn: {
+    width: 58,
+    height: 58,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.ivory,
+    borderWidth: 2,
+    borderColor: COLORS.ivoryEdge,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow(6),
   },
-  lobbyButtonText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 22,
-    color: '#ffffff',
+  suitGlyph: { fontSize: 30, fontWeight: '700' },
+
+  winKicker: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 10,
+    letterSpacing: 3,
+    fontWeight: '800',
+  },
+  winName: {
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 40,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  winSub: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 12,
+    letterSpacing: 3,
+    fontWeight: '800',
   },
 });

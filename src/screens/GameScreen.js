@@ -1,8 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Modal, Alert, ScrollView, Animated, LayoutAnimation, Vibration, Platform, UIManager } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Audio } from 'expo-av';
-import PlayingCard from '../components/PlayingCard';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, Pressable, Alert, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
+import PlayingCard, { CARD_ASPECT } from '../components/PlayingCard';
+import CardFan from '../components/CardFan';
+import FeltTable from '../components/FeltTable';
+import { BrassButton, Plaque, PlayerSeat } from '../components/TableUI';
+import { useTableSound } from '../hooks/useTableSound';
+import { useLandscape } from '../hooks/useLandscape';
+import { COLORS, FONTS, RADIUS, glow, shadow, isRedSuit, suitGlyph } from '../theme/casino';
 import { generateDeck, isValidPlay, shuffleDeck } from '../engine/GameEngine';
 
 if (Platform.OS === 'android') {
@@ -11,8 +17,30 @@ if (Platform.OS === 'android') {
   }
 }
 
+const SUIT_CHOICES = ['♥️', '♦️', '♣️', '♠️'];
+
 export default function GameScreen({ route, navigation }) {
   const { playerName, rules, playerCount = 4, chatEnabled = true, startingCards = 7 } = route.params;
+
+  const { width, height, needsRotate } = useLandscape();
+  const insets = useSafeAreaInsets();
+  const { playCheck, playWin, tap, notify } = useTableSound();
+
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const showToast = useCallback((message) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }, []);
+  useEffect(() => () => toastTimer.current && clearTimeout(toastTimer.current), []);
+
+  const metrics = useMemo(() => {
+    const shortSide = Math.min(width, height);
+    // The fan is ~1.85 card-heights tall, so cards stay modest in landscape.
+    const handCard = Math.round(Math.max(46, Math.min(76, shortSide * 0.17)));
+    return { handCard, boardCard: Math.round(handCard * 1.05), compactSeats: width < 760 };
+  }, [width, height]);
 
   const [deck, setDeck] = useState([]);
   const [discardPile, setDiscardPile] = useState([]);
@@ -84,54 +112,22 @@ export default function GameScreen({ route, navigation }) {
     if (card.value === 'A') setActivePenalty(0);
   };
 
-  useEffect(() => {
-    let bgSound;
-    async function initAudio() {
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          require('../../assets/bg.wav'),
-          { shouldPlay: true, isLooping: true, volume: 0.3 }
-        );
-        bgSound = sound;
-      } catch (e) {
-        console.log("Audio load error:", e);
-      }
-    }
-    initAudio();
-    return () => {
-      if (bgSound) bgSound.unloadAsync();
-    };
-  }, []);
-
-  const playSFX = async (type) => {
-    try {
-      const file = type === 'win' ? require('../../assets/win.wav') : require('../../assets/check.wav');
-      const { sound } = await Audio.Sound.createAsync(file, { shouldPlay: true });
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) sound.unloadAsync();
-      });
-    } catch (e) {
-      console.log("SFX error:", e);
-    }
-  };
-
   const checkWinCondition = (handLength, name, isPlayer, isSpecialFinish) => {
     if (handLength === 0) {
       if (isSpecialFinish) {
         if (isPlayer) {
-          Alert.alert("Special Finish", "You finished with a special card! You cannot win on a special card. You must draw a card on your next turn.");
+          showToast('No winning on a special card — you must draw next turn.');
+          notify('warning');
         }
         return false;
       }
       setGameOver(true);
-      Vibration.vibrate([0, 500, 200, 500]);
-      playSFX('win');
+      playWin();
       setWinState({ isPlayer, name });
       return true;
     } else if (handLength === 1) {
-      Vibration.vibrate(100);
-      playSFX('check');
-      Alert.alert("CHECK!", isPlayer ? "You have one card left!" : `${name} has one card left!`);
+      playCheck();
+      showToast(isPlayer ? 'CHECK — one card left!' : `CHECK — ${name} is on one card!`);
     }
     return false;
   };
@@ -281,7 +277,8 @@ export default function GameScreen({ route, navigation }) {
     const firstValue = selectedCards[0].value;
     
     if (!selectedCards.every(c => c.value === firstValue)) {
-      Alert.alert("Invalid Move", "You can only play multiple cards if they have the same value!");
+      showToast('Multiple cards must all share the same value.');
+      notify('error');
       return;
     }
 
@@ -292,14 +289,15 @@ export default function GameScreen({ route, navigation }) {
     
     if (validIndex === -1) {
       if (activePenalty > 0) {
-        Alert.alert("Invalid Move", "You must play a blocking card or draw the penalty!");
+        showToast(`Block with a 2, Ace or Joker — or draw ${activePenalty}.`);
       } else {
-        Alert.alert("Invalid Move", "None of these cards can be played on the discard pile right now!");
+        showToast("That won't go on the pile.");
       }
+      notify('error');
       return;
     }
 
-    Vibration.vibrate(50);
+    tap('medium');
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
     const cardsToPlay = [...selectedCards];
@@ -376,7 +374,7 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const executeDraw = () => {
-    Vibration.vibrate(50);
+    tap('light');
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
     let currentDeck = [...deck];
@@ -419,8 +417,7 @@ export default function GameScreen({ route, navigation }) {
   };
 
   const handleChat = () => {
-    if (!chatEnabled) Alert.alert('Chat Disabled', 'Chat is disabled for this game.');
-    else Alert.alert('Chat', 'Quick chat opened! (Coming soon)');
+    showToast(chatEnabled ? 'Quick chat is coming soon.' : 'Chat is disabled for this game.');
   };
 
   const handleAbort = () => {
@@ -438,511 +435,471 @@ export default function GameScreen({ route, navigation }) {
     }, 1500);
   };
 
+
+  if (needsRotate) {
+    return (
+      <FeltTable>
+        <View style={styles.rotateWrap}>
+          <Text style={styles.rotateGlyph}>⟳</Text>
+          <Text style={styles.rotateText}>TURN YOUR DEVICE SIDEWAYS</Text>
+          <Text style={styles.rotateSub}>CARDDEN is played on a wide table.</Text>
+        </View>
+      </FeltTable>
+    );
+  }
+
+  const topCard = discardPile[discardPile.length - 1];
+
   return (
-    <LinearGradient colors={['#000000', '#1a0b2e', '#000000']} style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.topActions}>
-          <TouchableOpacity style={styles.abortBtn} onPress={handleAbort}>
-            <Text style={styles.abortBtnText}>ABORT</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.restartBtn} onPress={handleRestart}>
-            <Text style={styles.restartBtnText}>RESTART</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.bridgeContainer}>
-          {opponents.map((opp) => {
-            const isTurn = currentTurn === opp.id;
-          return (
-            <View key={opp.id} style={[styles.opponent, isTurn && styles.activeOpponent]}>
-              <Text style={styles.opponentName}>{opp.name}</Text>
-              <Text style={styles.cardCount}>{opp.hand.length}</Text>
-              <Text style={styles.cardLabel}>CARDS</Text>
-            </View>
-          );
-        })}
-      </View>
+    <FeltTable>
+      <View
+        style={[
+          styles.safe,
+          { paddingTop: insets.top, paddingLeft: 12 + insets.left, paddingRight: 12 + insets.right },
+        ]}
+      >
+        {/* ---- Top rail ---- */}
+        <View style={styles.topRail}>
+          <View style={styles.topLeft}>
+            <BrassButton label="ABORT" tone="red" compact onPress={handleAbort} />
+            <BrassButton label="RESTART" tone="slate" compact onPress={handleRestart} />
+          </View>
 
-      <View style={styles.boardContainer}>
-        <View style={styles.deckSection}>
-          <TouchableOpacity 
-            onPress={drawCard} 
-            activeOpacity={0.8} 
-            style={[
-              currentTurn === 0 && !hasDrawn && styles.glowDeck, 
-              hasDrawn && styles.disabledDeck,
-              activePenalty > 0 && currentTurn === 0 && styles.penaltyDeck
-            ]}
-          >
-            <PlayingCard isHidden={true} />
-          </TouchableOpacity>
-          {activePenalty > 0 && (
-            <View style={styles.penaltyBadge}>
-              <Text style={styles.penaltyText}>+{activePenalty}</Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.discardContainer}>
-          {discardPile.map((card, index) => {
-            if (index < discardPile.length - 4) return null; 
-            return (
-              <PlayingCard 
-                key={`${card.id}-${index}`}
-                suit={card.suit} 
-                value={card.value}
-                style={{ position: 'absolute', transform: [{ rotate: `${(index * 7) % 20 - 10}deg` }] }}
+          <View style={styles.seatRow}>
+            {opponents.map((opp) => (
+              <PlayerSeat
+                key={opp.id}
+                name={opp.name}
+                cardCount={opp.hand.length}
+                isTurn={currentTurn === opp.id}
+                compact={metrics.compactSeats}
               />
-            );
-          })}
-          {calledSuit && (
-            <View style={styles.calledSuitBadge}>
-              <Text style={styles.calledSuitText}>{calledSuit}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      <View style={[styles.playerContainer, currentTurn === 0 && styles.activePlayerContainer]}>
-        <View style={styles.handHeader}>
-          <View>
-            <Text style={styles.playerName}>{playerName.toUpperCase()}</Text>
-            <Text style={styles.directionBadge}>{direction === 1 ? '▶' : '◀'} {rules}</Text>
+            ))}
           </View>
-          <View style={styles.actionRow}>
-            {selectedCardIndices.length > 0 && currentTurn === 0 && (
-              <TouchableOpacity style={styles.playBtn} onPress={handlePlaySelection}>
-                <Text style={styles.playBtnText}>PLAY CARDS</Text>
-              </TouchableOpacity>
-            )}
-            {hasDrawn && currentTurn === 0 && activePenalty === 0 && selectedCardIndices.length === 0 && (
-              <TouchableOpacity style={styles.passBtn} onPress={handlePass}>
-                <Text style={styles.passBtnText}>PASS</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity 
-              style={[styles.chatBtn, !chatEnabled && styles.chatBtnDisabled]} 
-              onPress={handleChat}
+
+          <BrassButton
+            label={chatEnabled ? 'CHAT' : 'NO CHAT'}
+            tone="slate"
+            compact
+            onPress={handleChat}
+          />
+        </View>
+
+        {/* ---- Board ---- */}
+        <View style={styles.board}>
+          <View style={styles.pileWrap}>
+            <Pressable
+              onPress={drawCard}
+              disabled={currentTurn !== 0 || hasDrawn}
+              style={(currentTurn !== 0 || hasDrawn) && styles.pileIdle}
             >
-              <Text style={styles.chatBtnText}>💬 CHAT</Text>
-            </TouchableOpacity>
+              <View>
+                {currentTurn === 0 && !hasDrawn && (
+                  <View
+                    style={[
+                      styles.drawHalo,
+                      {
+                        width: metrics.boardCard + 12,
+                        height: metrics.boardCard * CARD_ASPECT + 12,
+                        borderRadius: metrics.boardCard * 0.14,
+                      },
+                      activePenalty > 0 && styles.drawHaloDanger,
+                    ]}
+                    pointerEvents="none"
+                  />
+                )}
+                <PlayingCard isHidden width={metrics.boardCard} />
+              </View>
+            </Pressable>
+            <Text style={styles.pileLabel}>{deck.length} LEFT</Text>
+            {activePenalty > 0 && (
+              <Animated.View entering={ZoomIn.springify()} style={styles.penaltyBadge}>
+                <Text style={styles.penaltyBadgeText}>+{activePenalty}</Text>
+              </Animated.View>
+            )}
           </View>
-        </View>
-        
-        <View style={{ width: '100%', alignItems: 'center' }}>
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.handScroll}
-          >
-          {playerHand.map((card, index) => {
-            const isSelected = selectedCardIndices.includes(index);
-            const middleIndex = (playerHand.length - 1) / 2;
-            const distance = index - middleIndex;
-            
-            const maxDistance = 6;
-            const effectiveDistance = Math.max(-maxDistance, Math.min(maxDistance, distance));
-            
-            const rotation = effectiveDistance * 4; 
-            const yOffset = Math.pow(Math.abs(effectiveDistance), 1.5) * 3;
 
-            return (
-              <TouchableOpacity 
-                key={card.id} 
-                onPress={() => handleCardTap(index)}
-                activeOpacity={0.9}
-                style={{ 
-                  marginLeft: index === 0 ? 0 : -45, 
-                  opacity: currentTurn === 0 ? 1 : 0.7,
-                  transform: [
-                    { translateY: (isSelected ? -30 : 0) + yOffset },
-                    { rotateZ: `${rotation}deg` }
-                  ],
-                  zIndex: index
-                }}
-              >
-                <PlayingCard suit={card.suit} value={card.value} />
-              </TouchableOpacity>
-            )
-          })}
-          </ScrollView>
-        </View>
-      </View>
-
-      {showSuitPicker && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.suitPickerContainer}>
-            <Text style={styles.suitPickerTitle}>Select a Suit</Text>
-            <View style={styles.suitRow}>
-              {['♥️', '♦️', '♣️', '♠️'].map(s => (
-                <TouchableOpacity key={s} style={styles.suitBtn} onPress={() => handleSelectSuit(s)}>
-                  <Text style={[styles.suitBtnText, (s === '♥️' || s === '♦️') && styles.redText]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
+          <View style={styles.centerColumn}>
+            <Plaque tone={currentTurn === 0 ? 'live' : 'neutral'} style={styles.turnPlaque}>
+              <Text style={[styles.turnText, currentTurn === 0 && styles.turnTextLive]} numberOfLines={1}>
+                {gameOver
+                  ? 'HAND OVER'
+                  : currentTurn === 0
+                    ? 'YOUR TURN'
+                    : `${(opponents[currentTurn - 1]?.name ?? 'DEALER').toUpperCase()}'S TURN`}
+              </Text>
+            </Plaque>
+            <View style={styles.metaRow}>
+              <Plaque>
+                <Text style={styles.metaText}>{direction === 1 ? '↻ CLOCKWISE' : '↺ COUNTER'}</Text>
+              </Plaque>
+              <Plaque>
+                <Text style={styles.metaText}>{rules}</Text>
+              </Plaque>
             </View>
           </View>
-        </View>
-      )}
 
-      {winState && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.winContainer}>
-            <Text style={styles.winTitle}>
-              {winState.isPlayer ? 'VICTORY!' : 'GAME OVER'}
-            </Text>
-            <Text style={styles.winSubtitle}>
-              {winState.isPlayer ? 'You won the game! 🎉' : `${winState.name} won! 😢`}
-            </Text>
-            <TouchableOpacity 
-              style={styles.lobbyButton} 
-              onPress={() => navigation.replace('Lobby')}
-            >
-              <Text style={styles.lobbyButtonText}>BACK TO LOBBY</Text>
-            </TouchableOpacity>
+          <View style={[styles.pileWrap, { width: metrics.boardCard * 1.5 }]}>
+            <View style={{ width: metrics.boardCard, height: metrics.boardCard * CARD_ASPECT }}>
+              {discardPile.slice(-4).map((card, i, arr) => {
+                const absIndex = discardPile.length - arr.length + i;
+                const angle = (((absIndex * 37) % 17) - 8) * 1.1;
+                return (
+                  <Animated.View
+                    key={`${card.id}-${absIndex}`}
+                    entering={i === arr.length - 1 ? ZoomIn.springify().damping(15).mass(0.6) : undefined}
+                    style={[StyleSheet.absoluteFill, { transform: [{ rotate: `${angle}deg` }], zIndex: i }]}
+                  >
+                    <PlayingCard suit={card.suit} value={card.value} width={metrics.boardCard} />
+                  </Animated.View>
+                );
+              })}
+            </View>
+            <Text style={styles.pileLabel}>DISCARD</Text>
+            {!!calledSuit && (
+              <Animated.View entering={ZoomIn.springify()} style={styles.calledSuit}>
+                <Text
+                  style={[
+                    styles.calledSuitGlyph,
+                    { color: isRedSuit(calledSuit) ? COLORS.suitRed : COLORS.suitBlack },
+                  ]}
+                >
+                  {suitGlyph(calledSuit)}
+                </Text>
+              </Animated.View>
+            )}
           </View>
         </View>
-      )}
-      </SafeAreaView>
-    </LinearGradient>
+
+        {/* ---- Player rail ---- */}
+        <View style={styles.playerRail}>
+          <View style={styles.railHeader}>
+            <View style={styles.railIdentity}>
+              <Text style={styles.railName} numberOfLines={1}>
+                {playerName?.toUpperCase() ?? 'YOU'}
+              </Text>
+              <Text style={styles.railCount}>{playerHand.length} IN HAND</Text>
+            </View>
+
+            <View style={styles.railActions}>
+              {currentTurn === 0 && activePenalty > 0 && (
+                <Plaque tone="warn">
+                  <Text style={styles.penaltyText}>STACKED +{activePenalty}</Text>
+                </Plaque>
+              )}
+              {selectedCardIndices.length > 0 && currentTurn === 0 && (
+                <BrassButton
+                  label={selectedCardIndices.length > 1 ? `PLAY ${selectedCardIndices.length}` : 'PLAY'}
+                  tone="green"
+                  compact
+                  onPress={handlePlaySelection}
+                />
+              )}
+              {selectedCardIndices.length > 0 && (
+                <BrassButton
+                  label="CLEAR"
+                  tone="slate"
+                  compact
+                  onPress={() => setSelectedCardIndices([])}
+                />
+              )}
+              {hasDrawn && currentTurn === 0 && activePenalty === 0 && selectedCardIndices.length === 0 && (
+                <BrassButton label="PASS" tone="gold" compact onPress={handlePass} />
+              )}
+            </View>
+          </View>
+
+          <CardFan
+            cards={playerHand}
+            selectedIndices={selectedCardIndices}
+            onCardPress={handleCardTap}
+            cardWidth={metrics.handCard}
+            availableWidth={width - 32}
+            dimmed={currentTurn !== 0}
+          />
+        </View>
+
+        {/* ---- Toast ---- */}
+        {toast && (
+          <Animated.View entering={FadeInDown.duration(160)} style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastText}>{toast}</Text>
+          </Animated.View>
+        )}
+
+        {/* ---- Suit picker ---- */}
+        {showSuitPicker && (
+          <Animated.View entering={FadeIn.duration(140)} style={styles.overlay}>
+            <Animated.View entering={ZoomIn.springify().damping(16)} style={styles.modal}>
+              <Text style={styles.modalTitle}>CALL THE SUIT</Text>
+              <View style={styles.suitRow}>
+                {SUIT_CHOICES.map((s) => (
+                  <Pressable key={s} style={styles.suitBtn} onPress={() => handleSelectSuit(s)}>
+                    <Text
+                      style={[
+                        styles.suitGlyph,
+                        { color: isRedSuit(s) ? COLORS.suitRed : COLORS.suitBlack },
+                      ]}
+                    >
+                      {suitGlyph(s)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Animated.View>
+          </Animated.View>
+        )}
+
+        {/* ---- Game over ---- */}
+        {winState && (
+          <Animated.View entering={FadeIn.duration(200)} style={styles.overlay}>
+            <Animated.View entering={ZoomIn.springify().damping(14)} style={styles.modal}>
+              <Text style={styles.winKicker}>
+                {winState.isPlayer ? 'YOU TAKE THE TABLE' : 'THE HAND IS OVER'}
+              </Text>
+              <Text style={styles.winName}>
+                {(winState.isPlayer ? playerName : winState.name)?.toUpperCase()}
+              </Text>
+              <Text style={styles.winSub}>TAKES THE POT</Text>
+              <BrassButton
+                label="BACK TO THE FLOOR"
+                tone="gold"
+                onPress={() => navigation.replace('Lobby')}
+                style={{ marginTop: 18 }}
+              />
+            </Animated.View>
+          </Animated.View>
+        )}
+      </View>
+    </FeltTable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-    justifyContent: 'space-between',
-  },
-  topActions: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 20,
-    left: 15,
-    zIndex: 10,
-    flexDirection: 'row',
-    gap: 10,
-  },
-  abortBtn: {
-    backgroundColor: 'rgba(255, 0, 234, 0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ff00ea',
-  },
-  abortBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#ff00ea',
-    fontSize: 14,
-    letterSpacing: 1,
-  },
-  restartBtn: {
-    backgroundColor: 'rgba(0, 229, 255, 0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#00e5ff',
-  },
-  restartBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#00e5ff',
-    fontSize: 14,
-    letterSpacing: 1,
-  },
-  bridgeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 50,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#166534',
-  },
-  opponent: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-    padding: 15,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#334155',
-    minWidth: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-  },
-  activeOpponent: {
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.8,
-    shadowRadius: 15,
-  },
-  opponentName: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#f8fafc',
+  safe: { flex: 1 },
+
+  rotateWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+  rotateGlyph: { fontSize: 44, color: COLORS.goldBright },
+  rotateText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.goldBright,
     fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 5,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textAlign: 'center',
   },
-  cardCount: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#fbbf24',
-    fontSize: 32,
-    fontWeight: '900',
-    textShadowColor: 'rgba(251, 191, 36, 0.4)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
+  rotateSub: { fontFamily: FONTS.ui, color: COLORS.creamDim, fontSize: 12, letterSpacing: 1 },
+
+  topRail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingTop: 4,
   },
-  cardLabel: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginTop: 2,
-  },
-  boardContainer: {
+  topLeft: { flexDirection: 'row', gap: 6 },
+  seatRow: {
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+
+  board: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 40,
+    justifyContent: 'center',
+    gap: 18,
   },
-  deckSection: {
-    alignItems: 'center',
+  centerColumn: { alignItems: 'center', gap: 8, maxWidth: 260 },
+  metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: 'center' },
+  metaText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.3,
   },
-  glowDeck: {
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 15,
+  turnPlaque: { paddingHorizontal: 20, paddingVertical: 7 },
+  turnText: {
+    fontFamily: FONTS.display,
+    color: COLORS.cream,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
-  penaltyDeck: {
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 20,
+  turnTextLive: { color: COLORS.goldBright },
+
+  pileWrap: { alignItems: 'center', gap: 6 },
+  pileIdle: { opacity: 0.62 },
+  drawHalo: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    borderWidth: 2,
+    borderColor: COLORS.goldBright,
+    ...glow(COLORS.goldBright, 14, 1),
+  },
+  drawHaloDanger: { borderColor: COLORS.danger, ...glow(COLORS.danger, 14, 1) },
+  pileLabel: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 9,
+    letterSpacing: 1.6,
+    fontWeight: '700',
   },
   penaltyBadge: {
     position: 'absolute',
-    top: -15,
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#f8fafc',
-    shadowColor: '#ef4444',
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
+    top: -10,
+    right: -8,
+    backgroundColor: COLORS.danger,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldBright,
+    ...glow(COLORS.danger, 10, 0.9),
   },
-  penaltyText: {
-    color: 'white',
-    fontWeight: '900',
-    fontSize: 16,
-  },
-  disabledDeck: {
-    opacity: 0.5,
-  },
-  discardContainer: {
-    width: 90,
-    height: 130,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  calledSuitBadge: {
+  penaltyBadgeText: { fontFamily: FONTS.ui, color: '#fff', fontSize: 12, fontWeight: '900' },
+  calledSuit: {
     position: 'absolute',
-    top: -20,
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    top: -10,
+    right: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.ivory,
     borderWidth: 2,
-    borderColor: '#fbbf24',
-  },
-  calledSuitText: {
-    fontSize: 20,
-  },
-  playerContainer: {
-    padding: 25,
-    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-    borderTopLeftRadius: 35,
-    borderTopRightRadius: 35,
-    borderTopWidth: 2,
-    borderTopColor: '#334155',
-  },
-  activePlayerContainer: {
-    borderTopColor: '#8b5cf6',
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: -5 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 20,
-  },
-  handHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    borderColor: COLORS.gold,
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    ...shadow(6),
   },
-  actionRow: {
+  calledSuitGlyph: { fontSize: 15, fontWeight: '700' },
+
+  playerRail: {
+    borderTopWidth: 1.5,
+    borderTopColor: COLORS.goldDim,
+    backgroundColor: 'rgba(2, 24, 14, 0.55)',
+    borderTopLeftRadius: RADIUS.lg,
+    borderTopRightRadius: RADIUS.lg,
+    paddingTop: 4,
+  },
+  railHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
     gap: 10,
   },
-  playerName: {
-    color: '#f8fafc',
-    fontSize: 20,
-    fontWeight: '900',
-    letterSpacing: 1,
+  railIdentity: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  railName: {
+    fontFamily: FONTS.ui,
+    color: COLORS.goldBright,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    maxWidth: 160,
   },
-  directionBadge: {
-    color: '#8b5cf6',
-    fontSize: 12,
-    fontWeight: 'bold',
-    marginTop: 2,
+  railCount: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    fontWeight: '700',
   },
-  playBtn: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+  railActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  penaltyText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
-  playBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  passBtn: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    shadowColor: '#7c3aed',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-  },
-  passBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  chatBtn: {
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-  },
-  chatBtnDisabled: {
-    backgroundColor: '#475569',
-    shadowOpacity: 0,
-  },
-  chatBtnText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  handScroll: {
-    flexGrow: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 220,
-    paddingHorizontal: 20,
-    paddingTop: 40,
-    paddingBottom: 20,
-  },
-  modalOverlay: {
+
+  toast: {
     position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
+    bottom: '38%',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(10,0,0,0.88)',
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    maxWidth: 420,
+    ...shadow(10),
+  },
+  toastText: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textAlign: 'center',
+  },
+
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.72)',
     alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 1000,
   },
-  suitPickerContainer: {
-    backgroundColor: '#1e293b',
-    padding: 25,
-    borderRadius: 20,
-    alignItems: 'center',
+  modal: {
+    backgroundColor: '#07301c',
+    borderRadius: RADIUS.lg,
     borderWidth: 2,
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-  },
-  suitPickerTitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    color: '#f8fafc',
-    fontSize: 24,
-    fontWeight: '900',
-    marginBottom: 20,
-  },
-  suitRow: {
-    flexDirection: 'row',
-    gap: 15,
-  },
-  suitBtn: {
-    backgroundColor: '#0f172a',
-    padding: 20,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  suitBtnText: {
-    fontSize: 35,
-    color: '#f8fafc',
-  },
-  redText: {
-    color: '#ef4444',
-  },
-  winContainer: {
-    backgroundColor: 'rgba(30, 41, 59, 0.95)',
-    padding: 30,
-    borderRadius: 20,
+    borderColor: COLORS.gold,
+    paddingHorizontal: 28,
+    paddingVertical: 22,
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#fbbf24',
-    shadowColor: '#fbbf24',
-    shadowOpacity: 0.8,
-    shadowRadius: 30,
+    gap: 12,
+    ...shadow(20),
   },
-  winTitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 55,
-    color: '#fbbf24',
-    marginBottom: 10,
-    textShadowColor: 'rgba(251, 191, 36, 0.5)',
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 10,
+  modalTitle: {
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: 3,
   },
-  winSubtitle: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 20,
-    color: '#f8fafc',
-    marginBottom: 30,
+  suitRow: { flexDirection: 'row', gap: 12 },
+  suitBtn: {
+    width: 58,
+    height: 58,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.ivory,
+    borderWidth: 2,
+    borderColor: COLORS.ivoryEdge,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow(6),
   },
-  lobbyButton: {
-    backgroundColor: '#7c3aed',
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    borderRadius: 15,
+  suitGlyph: { fontSize: 30, fontWeight: '700' },
+
+  winKicker: {
+    fontFamily: FONTS.ui,
+    color: COLORS.creamDim,
+    fontSize: 10,
+    letterSpacing: 3,
+    fontWeight: '800',
   },
-  lobbyButtonText: {
-    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-black',
-    fontSize: 22,
-    color: '#ffffff',
+  winName: {
+    fontFamily: FONTS.display,
+    color: COLORS.goldBright,
+    fontSize: 40,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  winSub: {
+    fontFamily: FONTS.ui,
+    color: COLORS.cream,
+    fontSize: 12,
+    letterSpacing: 3,
+    fontWeight: '800',
   },
 });

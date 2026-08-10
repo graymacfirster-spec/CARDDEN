@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { supabase } from '../services/supabase';
+import FeltTable from '../components/FeltTable';
+import { BrassButton } from '../components/TableUI';
+import { COLORS, FONTS, RADIUS, shadow } from '../theme/casino';
 
 export default function AuthScreen() {
   const [email, setEmail] = useState('');
@@ -94,20 +97,22 @@ export default function AuthScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>CARDDEN</Text>
+    <FeltTable>
+      <View style={styles.container}>
+        <Text style={styles.title}>CARDDEN</Text>
+        <Text style={styles.kicker}>MEMBERS ONLY</Text>
       
       <View style={styles.form}>
         {!!authError && (
-          <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', padding: 10, borderRadius: 8, marginBottom: 15, borderWidth: 1, borderColor: '#ef4444' }}>
-            <Text style={{ color: '#ef4444', textAlign: 'center', fontWeight: 'bold' }}>{authError}</Text>
+          <View style={{ backgroundColor: 'rgba(179, 18, 31, 0.22)', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: COLORS.danger }}>
+            <Text style={{ color: COLORS.cream, textAlign: 'center', fontWeight: '700', fontFamily: FONTS.ui }}>{authError}</Text>
           </View>
         )}
         {!isLogin && (
           <TextInput
             style={styles.input}
             placeholder="Username"
-            placeholderTextColor="rgba(255,255,255,0.5)"
+            placeholderTextColor="rgba(245,239,224,0.35)"
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
@@ -116,7 +121,7 @@ export default function AuthScreen() {
         <TextInput
           style={[styles.input, emailError ? styles.inputError : null]}
           placeholder="Email"
-          placeholderTextColor="rgba(255,255,255,0.5)"
+          placeholderTextColor="rgba(245,239,224,0.35)"
           value={email}
           onChangeText={validateEmail}
           autoCapitalize="none"
@@ -126,93 +131,89 @@ export default function AuthScreen() {
         <TextInput
           style={[styles.input, passwordError ? styles.inputError : null]}
           placeholder="Password"
-          placeholderTextColor="rgba(255,255,255,0.5)"
+          placeholderTextColor="rgba(245,239,224,0.35)"
           value={password}
           onChangeText={validatePassword}
           secureTextEntry
         />
         {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
         
-        <TouchableOpacity 
-          style={styles.button} 
-          onPress={handleAuth}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>{isLogin ? 'LOGIN' : 'SIGN UP'}</Text>
-          )}
-        </TouchableOpacity>
-        
-        <TouchableOpacity onPress={() => setIsLogin(!isLogin)} style={styles.switchBtn}>
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={COLORS.gold} />
+          </View>
+        ) : (
+          <BrassButton
+            label={isLogin ? 'ENTER THE HOUSE' : 'OPEN AN ACCOUNT'}
+            tone="gold"
+            onPress={handleAuth}
+          />
+        )}
+
+        <Pressable onPress={() => setIsLogin(!isLogin)} style={styles.switchBtn} hitSlop={8}>
           <Text style={styles.switchText}>
-            {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Login"}
+            {isLogin ? 'No account yet? Sign up' : 'Already a member? Log in'}
           </Text>
-        </TouchableOpacity>
+        </Pressable>
+        </View>
       </View>
-    </View>
+    </FeltTable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
   },
   title: {
-    fontSize: 48,
-    fontWeight: '900',
-    color: '#8b5cf6',
-    marginBottom: 40,
-    textShadow: '0px 0px 20px rgba(139, 92, 246, 0.5)',
+    fontFamily: FONTS.display,
+    fontSize: 44,
+    fontWeight: '700',
+    color: COLORS.goldBright,
+    letterSpacing: 8,
+  },
+  kicker: {
+    fontFamily: FONTS.ui,
+    fontSize: 10,
+    letterSpacing: 5,
+    color: COLORS.creamDim,
+    fontWeight: '700',
+    marginBottom: 26,
   },
   form: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 420,
+    gap: 12,
+    padding: 20,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldDim,
+    backgroundColor: 'rgba(3, 26, 15, 0.72)',
+    ...shadow(12),
   },
   input: {
-    backgroundColor: '#1e293b',
-    color: '#f8fafc',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    color: COLORS.cream,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
+    fontFamily: FONTS.ui,
+    fontSize: 15,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldDim,
   },
-  inputError: {
-    borderColor: '#ef4444',
-  },
+  inputError: { borderColor: COLORS.danger },
   errorText: {
-    color: '#ef4444',
-    fontSize: 12,
-    marginTop: -10,
-    marginBottom: 15,
-    marginLeft: 5,
+    fontFamily: FONTS.ui,
+    color: COLORS.danger,
+    fontSize: 11,
+    marginTop: -6,
+    marginLeft: 4,
   },
-  button: {
-    backgroundColor: '#ff00ea',
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 10,
-    boxShadow: '0px 0px 10px rgba(255, 0, 234, 0.5)',
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 18,
-  },
-  switchBtn: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  switchText: {
-    color: '#94a3b8',
-    fontSize: 14,
-  },
+  loadingBox: { paddingVertical: 14, alignItems: 'center' },
+  switchBtn: { alignItems: 'center', marginTop: 4 },
+  switchText: { fontFamily: FONTS.ui, color: COLORS.creamDim, fontSize: 12 },
 });

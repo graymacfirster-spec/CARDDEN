@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import FeltTable from '../components/FeltTable';
+import { BrassButton } from '../components/TableUI';
+import { COLORS, FONTS, RADIUS, shadow } from '../theme/casino';
 
 export default function MainMenuScreen({ navigation }) {
   const { profile } = useAuth();
+  const insets = useSafeAreaInsets();
   const [roomCode, setRoomCode] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -82,153 +87,180 @@ export default function MainMenuScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>MAIN MENU</Text>
-      <Text style={styles.subtitle}>Welcome, {profile?.username || 'Player'}</Text>
-      
-      <View style={styles.card}>
-        <TouchableOpacity style={[styles.btn, styles.hostBtn]} onPress={handleHostGame} disabled={loading}>
-          <Text style={styles.btnText}>HOST ONLINE GAME</Text>
-        </TouchableOpacity>
-        
-        <View style={styles.divider} />
-        
-        <Text style={styles.label}>JOIN GAME</Text>
-        <TextInput 
-          style={styles.input}
-          placeholder="Enter Room Code"
-          placeholderTextColor="rgba(255,255,255,0.4)"
-          value={roomCode}
-          onChangeText={setRoomCode}
-          autoCapitalize="characters"
-          maxLength={6}
-        />
-        
-        <View style={styles.row}>
-          <TouchableOpacity style={[styles.btn, styles.joinBtn, { flex: 1, marginRight: 5 }]} onPress={() => handleJoinGame('participant')} disabled={loading}>
-            <Text style={styles.btnTextSmall}>JOIN AS PLAYER</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.btn, styles.spectateBtn, { flex: 1, marginLeft: 5 }]} onPress={() => handleJoinGame('audience')} disabled={loading}>
-            <Text style={styles.btnTextSmall}>SPECTATE</Text>
-          </TouchableOpacity>
+    <FeltTable>
+      <View style={[styles.screen, { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 10 }]}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.brand}>CARDDEN</Text>
+            <Text style={styles.tagline}>THE HOUSE IS OPEN</Text>
+          </View>
+          <View style={styles.playerChip}>
+            <Text style={styles.playerChipLabel}>SEATED AS</Text>
+            <Text style={styles.playerChipName}>{(profile?.username || 'PLAYER').toUpperCase()}</Text>
+          </View>
         </View>
 
-        <View style={styles.divider} />
+        <View style={styles.columns}>
+          {/* Host */}
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>OPEN A TABLE</Text>
+            <Text style={styles.panelBody}>
+              Deal a private room and share the code. You run the house rules.
+            </Text>
+            <BrassButton label="HOST ONLINE GAME" tone="gold" onPress={handleHostGame} disabled={loading} />
 
-        <TouchableOpacity style={[styles.btn, styles.localBtn]} onPress={() => navigation.navigate('Lobby')}>
-          <Text style={styles.btnText}>LOCAL PLAY (BOTS)</Text>
-        </TouchableOpacity>
+            <View style={styles.divider} />
+
+            <Text style={styles.panelTitle}>PRACTICE</Text>
+            <BrassButton
+              label="LOCAL PLAY VS BOTS"
+              tone="slate"
+              onPress={() => navigation.navigate('Lobby')}
+            />
+          </View>
+
+          {/* Join */}
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>TAKE A SEAT</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="ROOM CODE"
+              placeholderTextColor="rgba(245,239,224,0.35)"
+              value={roomCode}
+              onChangeText={setRoomCode}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={6}
+            />
+            <View style={styles.row}>
+              <BrassButton
+                label="JOIN AS PLAYER"
+                tone="green"
+                onPress={() => handleJoinGame('participant')}
+                disabled={loading}
+                style={styles.grow}
+              />
+              <BrassButton
+                label="SPECTATE"
+                tone="slate"
+                onPress={() => handleJoinGame('audience')}
+                disabled={loading}
+                style={styles.grow}
+              />
+            </View>
+
+            <View style={styles.divider} />
+
+            <Pressable onPress={handleLogout} hitSlop={8} style={styles.logoutBtn}>
+              <Text style={styles.logoutText}>LEAVE THE FLOOR</Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
 
-      <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-        <Text style={styles.logoutText}>LOGOUT</Text>
-      </TouchableOpacity>
-      
       {loading && (
         <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#00ffcc" />
+          <ActivityIndicator size="large" color={COLORS.gold} />
         </View>
       )}
-    </View>
+    </FeltTable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: { flex: 1, paddingHorizontal: 22, gap: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  brand: {
+    fontFamily: FONTS.display,
+    fontSize: 34,
+    fontWeight: '700',
+    color: COLORS.goldBright,
+    letterSpacing: 6,
+  },
+  tagline: {
+    fontFamily: FONTS.ui,
+    fontSize: 10,
+    letterSpacing: 4,
+    color: COLORS.creamDim,
+    fontWeight: '700',
+  },
+  playerChip: {
+    alignItems: 'flex-end',
+    borderWidth: 1,
+    borderColor: COLORS.goldDim,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  playerChipLabel: {
+    fontFamily: FONTS.ui,
+    fontSize: 8,
+    letterSpacing: 2,
+    color: COLORS.creamDim,
+    fontWeight: '700',
+  },
+  playerChipName: {
+    fontFamily: FONTS.ui,
+    fontSize: 14,
+    letterSpacing: 1.5,
+    color: COLORS.cream,
+    fontWeight: '800',
+  },
+
+  columns: { flex: 1, flexDirection: 'row', gap: 16 },
+  panel: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    borderRadius: RADIUS.lg,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldDim,
+    backgroundColor: 'rgba(3, 26, 15, 0.7)',
+    padding: 18,
+    gap: 12,
     justifyContent: 'center',
-    padding: 20,
+    ...shadow(10),
   },
-  title: {
-    fontSize: 40,
-    fontWeight: '900',
-    color: '#00ffcc',
-    textAlign: 'center',
-    textShadow: '0px 0px 10px rgba(0, 255, 204, 0.5)',
-  },
-  subtitle: {
-    fontSize: 18,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    padding: 20,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  btn: {
-    padding: 15,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  hostBtn: {
-    backgroundColor: '#ff00ea',
-    boxShadow: '0px 0px 10px rgba(255, 0, 234, 0.5)',
-  },
-  joinBtn: {
-    backgroundColor: '#8b5cf6',
-  },
-  spectateBtn: {
-    backgroundColor: '#3b82f6',
-  },
-  localBtn: {
-    backgroundColor: '#475569',
-  },
-  btnText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-    letterSpacing: 1,
-  },
-  btnTextSmall: {
-    color: 'white',
-    fontWeight: 'bold',
+  panelTitle: {
+    fontFamily: FONTS.ui,
     fontSize: 12,
+    letterSpacing: 3,
+    color: COLORS.goldBright,
+    fontWeight: '800',
   },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    marginVertical: 20,
+  panelBody: {
+    fontFamily: FONTS.ui,
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.creamDim,
   },
-  label: {
-    color: '#f8fafc',
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
+  divider: { height: 1, backgroundColor: 'rgba(212,175,55,0.25)', marginVertical: 4 },
   input: {
-    backgroundColor: '#0f172a',
-    color: '#f8fafc',
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    color: COLORS.cream,
+    paddingVertical: 12,
+    borderRadius: RADIUS.md,
     textAlign: 'center',
-    fontSize: 20,
-    fontWeight: 'bold',
-    letterSpacing: 5,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    fontFamily: FONTS.display,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 8,
+    borderWidth: 1.5,
+    borderColor: COLORS.goldDim,
   },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  logoutBtn: {
-    marginTop: 30,
-    alignItems: 'center',
-  },
+  row: { flexDirection: 'row', gap: 10 },
+  grow: { flex: 1 },
+  logoutBtn: { alignItems: 'center' },
   logoutText: {
-    color: '#ef4444',
-    fontWeight: 'bold',
+    fontFamily: FONTS.ui,
+    color: COLORS.danger,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 2,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-  }
+  },
 });

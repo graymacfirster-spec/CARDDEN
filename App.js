@@ -3,7 +3,8 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, ActivityIndicator } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ActivityIndicator, View } from 'react-native';
 
 // Screens
 import AuthScreen from './src/screens/AuthScreen';
@@ -16,17 +17,19 @@ import GameScreen from './src/screens/GameScreen';
 
 // Providers
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { COLORS } from './src/theme/casino';
 
 const Stack = createNativeStackNavigator();
 
-const customDarkTheme = {
+const casinoTheme = {
   ...DarkTheme,
   colors: {
     ...DarkTheme.colors,
-    background: '#0f172a', // deep sleek blue/slate
-    card: '#1e293b',
-    text: '#f8fafc',
-    primary: '#8b5cf6', // neon purple
+    background: COLORS.feltDeep,
+    card: COLORS.woodDark,
+    text: COLORS.cream,
+    border: COLORS.goldDim,
+    primary: COLORS.gold,
   },
 };
 
@@ -35,18 +38,19 @@ const RootNavigator = () => {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#8b5cf6" />
+      <View style={{ flex: 1, backgroundColor: COLORS.feltDeep, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={COLORS.gold} />
       </View>
     );
   }
 
   return (
-    <Stack.Navigator 
-      initialRouteName={session ? "TC" : "Auth"}
+    <Stack.Navigator
+      initialRouteName={session ? 'TC' : 'Auth'}
       screenOptions={{
         headerShown: false,
-        animation: 'fade_from_bottom',
+        animation: 'fade',
+        contentStyle: { backgroundColor: COLORS.feltDeep },
       }}
     >
       {!session ? (
@@ -65,16 +69,17 @@ const RootNavigator = () => {
   );
 };
 
-
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <NavigationContainer theme={customDarkTheme}>
-          <RootNavigator />
-        </NavigationContainer>
-      </AuthProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <StatusBar style="light" hidden />
+          <NavigationContainer theme={casinoTheme}>
+            <RootNavigator />
+          </NavigationContainer>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
